@@ -1,0 +1,158 @@
+sequenceDiagram
+    participant User
+    participant WebUI as Angular UI
+    participant PythonService as Python Service
+    participant NATS as NATS JetStream
+    participant ControlPlane as Control Plane
+    participant Container as Agent Container
+    participant Orchestrator as Orchestrator Agent
+    participant Agents as Specialist Agents
+    participant PostgreSQL as PostgreSQL
+
+    Note over User,PostgreSQL: Chat Start Flow
+    User->>WebUI: Start new chat<br/>(select GitHub repo or none)
+    WebUI->>PythonService: POST /api/chatkit<br/>{message, repository_id}
+    PythonService->>PostgreSQL: Create thread
+    PostgreSQL-->>PythonService: Thread created
+    
+    PythonService->>NATS: Publish chat.start<br/>{chat_id, repository_id, project_id}
+    NATS-->>PythonService: Published
+    
+    NATS->>ControlPlane: Deliver chat.start
+    ControlPlane->>ControlPlane: Get repository details
+    ControlPlane->>Container: Create container<br/>(with CHAT_ID, REPOSITORY_URL)
+    Container->>Container: Clone repository
+    Container->>Container: Start worker process
+    Container->>NATS: Subscribe to agent.chat.{chat_id}.>
+    ControlPlane->>PostgreSQL: Save ChatContainer record
+    ControlPlane-->>NATS: ACK
+    
+    PythonService-->>WebUI: Chat started
+    WebUI-->>User: Display chat interface
+
+    Note over User,PostgreSQL: Agent Execution Flow
+    User->>WebUI: Send task message
+    WebUI->>PythonService: POST /api/chatkit<br/>{message, trigger_workflow: true}
+    PythonService->>NATS: Publish command<br/>agent.chat.{chat_id}.run.start
+    NATS-->>PythonService: Published
+    
+    NATS->>Container: Deliver run.start command
+    Container->>Orchestrator: Start orchestrator agent
+    Orchestrator->>Orchestrator: Analyze task
+    
+    loop Agent sequence execution
+        Orchestrator->>NATS: Publish state<br/>agent.chat.{chat_id}.scouting
+        NATS->>PythonService: State update
+        PythonService->>PostgreSQL: Update chat state
+        PythonService->>WebUI: SSE event
+        WebUI->>User: Show "Scouting repository"
+        
+        Orchestrator->>Agents: repo-scout agent
+        Agents->>Container: Read repository files
+        Agents-->>Orchestrator: Repository summary
+        
+        Orchestrator->>NATS: Publish state<br/>agent.chat.{chat_id}.planning
+        NATS->>PythonService: State update
+        PythonService->>WebUI: SSE event
+        WebUI->>User: Show "Planning solution"
+        
+        Orchestrator->>Agents: skills-lead agent
+        Agents-->>Orchestrator: Selected agents
+        
+        Orchestrator->>Agents: solution-planner agent
+        Agents-->>Orchestrator: Implementation plan
+        
+        Orchestrator->>NATS: Publish state<br/>agent.chat.{chat_id}.designing
+        NATS->>PythonService: State update
+        PythonService->>WebUI: SSE event
+        WebUI->>User: Show "Designing solution"
+        
+        Orchestrator->>Agents: Design agent
+        Agents-->>Orchestrator: Design spec
+        
+        Orchestrator->>NATS: Publish state<br/>agent.chat.{chat_id}.implementing
+        NATS->>PythonService: State update
+        PythonService->>WebUI: SSE event
+        WebUI->>User: Show "Implementing"
+        
+        par Parallel implementation
+            Orchestrator->>Agents: Go developer
+            Agents->>Container: Write/patch files
+        and
+            Orchestrator->>Agents: Angular developer
+            Agents->>Container: Write/patch files
+        and
+            Orchestrator->>Agents: DevOps developer
+            Agents->>Container: Write/patch files
+        end
+        
+        Orchestrator->>NATS: Publish state<br/>agent.chat.{chat_id}.testing
+        NATS->>PythonService: State update
+        PythonService->>WebUI: SSE event
+        WebUI->>User: Show "Testing"
+        
+        Orchestrator->>Agents: Test engineers
+        Agents->>Container: Run tests
+        Agents-->>Orchestrator: Test results
+        
+        Orchestrator->>NATS: Publish state<br/>agent.chat.{chat_id}.reviewing
+        NATS->>PythonService: State update
+        PythonService->>WebUI: SSE event
+        WebUI->>User: Show "Reviewing code"
+        
+        Orchestrator->>Agents: Code reviewer
+        Agents-->>Orchestrator: Review results
+        
+        Orchestrator->>NATS: Publish state<br/>agent.chat.{chat_id}.verifying
+        NATS->>PythonService: State update
+        PythonService->>WebUI: SSE event
+        WebUI->>User: Show "Verifying completion"
+        
+        Orchestrator->>Agents: Completion verifier
+        Agents-->>Orchestrator: Verification result
+        
+        alt Verification passed
+            Orchestrator->>NATS: Publish state<br/>agent.chat.{chat_id}.completed
+            NATS->>PythonService: State update
+            PythonService->>WebUI: SSE event
+            WebUI->>User: Show "Task completed"
+        else Verification failed
+            Orchestrator->>NATS: Publish state<br/>agent.chat.{chat_id}.repairing
+            NATS->>PythonService: State update
+            PythonService->>WebUI: SSE event
+            WebUI->>User: Show "Repairing issues"
+            Orchestrator->>Orchestrator: Increment repair count
+            Orchestrator->>Orchestrator: Return to implementing
+        end
+    end
+    
+    Note over User,PostgreSQL: Human Intervention Flow
+    alt Protected action detected
+        Orchestrator->>NATS: Publish state<br/>agent.chat.{chat_id}.waiting_approval
+        NATS->>PythonService: State update
+        PythonService->>WebUI: SSE event
+        WebUI->>User: Show approval dialog
+        
+        User->>WebUI: Approve or reject
+        WebUI->>PythonService: POST /approvals/{id}/approve
+        PythonService->>NATS: Publish command<br/>agent.chat.{chat_id}.run.resume
+        NATS->>Container: Deliver resume command
+        Container->>Orchestrator: Resume execution
+    end
+
+    Note over User,PostgreSQL: Chat Termination Flow
+    User->>WebUI: Close chat
+    WebUI->>PythonService: POST /api/chatkit/close/{chat_id}
+    PythonService->>NATS: Publish chat.close<br/>{chat_id}
+    NATS-->>PythonService: Published
+    
+    NATS->>ControlPlane: Deliver chat.close
+    ControlPlane->>Container: Stop container
+    Container->>Container: Cleanup resources
+    ControlPlane->>Container: Remove container
+    ControlPlane->>PostgreSQL: Update ChatContainer status
+    ControlPlane-->>NATS: ACK
+    
+    NATS->>PythonService: Message delivered
+    PythonService-->>WebUI: Chat closed
+    WebUI-->>User: Chat terminated

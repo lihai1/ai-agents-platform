@@ -1,0 +1,61 @@
+sequenceDiagram
+    participant User
+    participant WebUI as Angular UI
+    participant WorkflowAPI as Workflow API
+    participant PostgreSQL as PostgreSQL
+    participant NATS as NATS JetStream
+    participant Worker as Agent Worker
+    participant LangGraph as LangGraph Workflow
+    participant LangSmith as LangSmith
+
+    User->>WebUI: Select run to monitor
+    WebUI->>WorkflowAPI: GET /runs/{run_id}/events<br/>with Last-Event-ID header
+
+    alt Last-Event-ID provided (reconnection)
+        WorkflowAPI->>PostgreSQL: Query events after ID
+        PostgreSQL-->>WorkflowAPI: Historical events
+        WorkflowAPI->>WebUI: SSE replay events
+    else No Last-Event-ID (new connection)
+        WorkflowAPI->>PostgreSQL: Query all events for run
+        PostgreSQL-->>WorkflowAPI: All events
+    end
+
+    Note over WorkflowAPI: Open SSE connection
+    WorkflowAPI->>WebUI: SSE stream open
+
+    Note over LangGraph: Workflow executing
+    LangGraph->>LangSmith: Send trace data<br/>(metadata: run_id, project_id)
+    LangSmith-->>LangGraph: Trace confirmed
+
+    LangGraph->>PostgreSQL: Save checkpoint<br/>(phase transition)
+    LangGraph->>Worker: Emit event<br/>(phase_changed, agent_started, tool_executed)
+    Worker->>NATS: Publish event<br/>agent.events.{run_id}
+    NATS->>WorkflowAPI: Event received
+    WorkflowAPI->>PostgreSQL: Store event in agent_events
+    WorkflowAPI->>WebUI: SSE event<br/>{event_id, type, data,<br/>sanitized_output}
+
+    loop For each workflow event
+        LangGraph->>Worker: Emit event
+        Worker->>NATS: Publish event
+        NATS->>WorkflowAPI: Event received
+        WorkflowAPI->>PostgreSQL: Store event
+        WorkflowAPI->>WebUI: SSE event
+        WebUI->>User: Update activity panel
+    end
+
+    Note over LangGraph: Terminal state reached
+    LangGraph->>Worker: Emit final event<br/>(run_completed, run_failed, run_cancelled)
+    Worker->>NATS: Publish final event
+    NATS->>WorkflowAPI: Final event received
+    WorkflowAPI->>PostgreSQL: Store final event
+    WorkflowAPI->>WebUI: SSE final event
+    WorkflowAPI->>WebUI: Close SSE stream
+    WebUI-->>User: Show final status
+
+    alt Browser reconnection
+        WebUI->>WorkflowAPI: GET /runs/{run_id}/events<br/>Last-Event-ID: {last_event_id}
+        WorkflowAPI->>PostgreSQL: Query events after ID
+        PostgreSQL-->>WorkflowAPI: Missed events
+        WorkflowAPI->>WebUI: SSE replay missed events
+        WorkflowAPI->>WebUI: Resume live streaming
+    end

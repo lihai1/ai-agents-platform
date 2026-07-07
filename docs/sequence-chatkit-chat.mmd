@@ -1,0 +1,36 @@
+sequenceDiagram
+    participant User
+    participant WebUI as Angular UI
+    participant AgentAPI as Agent API<br/>FastAPI
+    participant PostgreSQL as PostgreSQL
+    participant LLM as LLM Provider<br/>(OpenAI/Anthropic/Ollama)
+
+    User->>WebUI: Send message
+    WebUI->>AgentAPI: POST /api/chatkit/<br/>{message, thread_id?, model_provider}
+    
+    AgentAPI->>PostgreSQL: Get or create thread
+    alt Thread exists
+        PostgreSQL-->>AgentAPI: Return thread
+    else Thread not exists
+        AgentAPI->>PostgreSQL: Create new thread
+        PostgreSQL-->>AgentAPI: Return new thread
+    end
+
+    AgentAPI->>PostgreSQL: Save user message<br/>(ChatkitItem)
+    PostgreSQL-->>AgentAPI: Saved
+
+    AgentAPI->>LLM: Get model instance<br/>(model_factory)
+    LLM-->>AgentAPI: Return LLM
+
+    loop Streaming response
+        AgentAPI->>LLM: astream(message)
+        LLM-->>AgentAPI: Chunk content
+        AgentAPI->>WebUI: SSE data: {content, thread_id}
+        WebUI->>User: Display chunk
+    end
+
+    AgentAPI->>PostgreSQL: Save assistant message<br/>(ChatkitItem)
+    PostgreSQL-->>AgentAPI: Saved
+
+    AgentAPI-->>WebUI: Stream complete
+    WebUI-->>User: Message complete

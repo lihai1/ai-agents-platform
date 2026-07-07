@@ -1,0 +1,76 @@
+graph TB
+    subgraph "Client Layer"
+        WebUI[Angular Web UI<br/>Port 4200]
+    end
+
+    subgraph "API Layer"
+        ControlPlane[Go Control Plane<br/>Port 8080<br/>Users, Projects, Repos]
+        AgentAPI[Python Agent API<br/>Port 8000<br/>FastAPI]
+    end
+
+    subgraph "Worker Layer"
+        AgentWorker[Python Agent Worker<br/>LangGraph Execution]
+    end
+
+    subgraph "Messaging Layer"
+        NATS[NATS JetStream<br/>Command & Event Streams]
+    end
+
+    subgraph "Data Layer"
+        PostgreSQL[(PostgreSQL<br/>Port 5433)]
+        LangSmith[LangSmith<br/>Tracing]
+    end
+
+    subgraph "Execution Layer"
+        DockerWorkspaces[Docker Workspaces<br/>Isolated Containers]
+    end
+
+    subgraph "External Services"
+        OpenAI[OpenAI API]
+        Anthropic[Anthropic API]
+        Ollama[Ollama<br/>Local LLM]
+    end
+
+    %% Client to API connections
+    WebUI -->|HTTP/REST| ControlPlane
+    WebUI -->|HTTP/REST| AgentAPI
+    WebUI -->|SSE Events| AgentAPI
+
+    %% API to Worker via NATS
+    AgentAPI -->|Publish Commands| NATS
+    AgentWorker -->|Subscribe Commands| NATS
+    AgentWorker -->|Publish Events| NATS
+    AgentAPI -->|Subscribe Events| NATS
+
+    %% Database connections
+    ControlPlane -->|SQL| PostgreSQL
+    AgentAPI -->|SQL| PostgreSQL
+    AgentWorker -->|Checkpointer| PostgreSQL
+
+    %% LangSmith tracing
+    AgentWorker -->|Tracing| LangSmith
+
+    %% Workspace management
+    AgentWorker -->|Create/Execute| DockerWorkspaces
+
+    %% LLM provider connections
+    AgentWorker -->|API Calls| OpenAI
+    AgentWorker -->|API Calls| Anthropic
+    AgentWorker -->|API Calls| Ollama
+
+    %% Styling
+    classDef client fill:#e1f5ff,stroke:#01579b,stroke-width:2px
+    classDef api fill:#fff3e0,stroke:#e65100,stroke-width:2px
+    classDef worker fill:#f3e5f5,stroke:#4a148c,stroke-width:2px
+    classDef messaging fill:#e8f5e9,stroke:#1b5e20,stroke-width:2px
+    classDef data fill:#fce4ec,stroke:#880e4f,stroke-width:2px
+    classDef execution fill:#fff9c4,stroke:#f57f17,stroke-width:2px
+    classDef external fill:#cfd8dc,stroke:#455a64,stroke-width:2px
+
+    class WebUI client
+    class ControlPlane,AgentAPI api
+    class AgentWorker worker
+    class NATS messaging
+    class PostgreSQL,LangSmith data
+    class DockerWorkspaces execution
+    class OpenAI,Anthropic,Ollama external

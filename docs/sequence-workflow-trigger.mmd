@@ -1,0 +1,93 @@
+sequenceDiagram
+    participant User
+    participant WebUI as Angular UI
+    participant PythonService as Python Service
+    participant NATS as NATS JetStream
+    participant ControlPlane as Control Plane
+    participant Worker as Agent Worker
+    participant PostgreSQL as PostgreSQL
+    participant LangGraph as LangGraph
+
+    User->>WebUI: Send task with project & repo
+    WebUI->>PythonService: POST /api/chatkit/<br/>{trigger_workflow: true,<br/>project_id, repository_id}
+
+    PythonService->>PostgreSQL: Get/create thread
+    PostgreSQL-->>PythonService: Thread
+
+    PythonService->>PostgreSQL: Save user message
+    
+    Note over PythonService,NATS: Publish chat start message
+    PythonService->>NATS: Publish chat.start<br/>{chat_id, repository_id, project_id}
+    NATS-->>PythonService: Message published
+
+    Note over NATS,ControlPlane: Control plane subscribes to chat.start
+    NATS->>ControlPlane: Deliver chat.start message
+    ControlPlane->>ControlPlane: Create container for chat
+    ControlPlane->>PostgreSQL: Save ChatContainer record
+    ControlPlane-->>NATS: ACK
+
+    Note over ControlPlane,NATS: Container ready signal
+    ControlPlane->>NATS: Publish agent.chat.{chat_id}.start<br/>{chat_id, repository_id, project_id}
+    NATS-->>ControlPlane: Message published
+
+    Note over PythonService,NATS: Python service subscribes to agent events
+    PythonService->>NATS: Subscribe to agent.chat.{chat_id}.>
+    NATS-->>PythonService: Subscribed
+
+    Note over PythonService,NATS: Trigger worker
+    PythonService->>NATS: Publish command<br/>agent.chat.{chat_id}.run.start
+    NATS-->>PythonService: Command published
+
+    PythonService-->>WebUI: SSE: Workflow started
+    WebUI-->>User: Display workflow started
+
+    Worker->>NATS: Receive run.start command
+    NATS-->>Worker: Command delivered
+
+    Worker->>PostgreSQL: Get checkpointer
+    Worker->>LangGraph: Create workflow graph<br/>with checkpointer
+    LangGraph-->>Worker: Graph compiled
+
+    Worker->>LangGraph: ainvoke(initial_state)<br/>with thread_id=chat_id
+    LangGraph->>PostgreSQL: Save checkpoint<br/>(CREATED state)
+    PostgreSQL-->>LangGraph: Checkpoint saved
+
+    LangGraph->>LangGraph: Execute CREATED node
+    LangGraph->>PostgreSQL: Update checkpoint<br/>(PREPARING_WORKSPACE)
+    LangGraph->>PostgreSQL: Update checkpoint<br/>(SCOUTING)
+    LangGraph->>PostgreSQL: Update checkpoint<br/>(PLANNING)
+    LangGraph->>PostgreSQL: Update checkpoint<br/>(DESIGNING)
+    LangGraph->>PostgreSQL: Update checkpoint<br/>(IMPLEMENTING)
+    LangGraph->>PostgreSQL: Update checkpoint<br/>(TESTING)
+    LangGraph->>PostgreSQL: Update checkpoint<br/>(REVIEWING)
+    LangGraph->>PostgreSQL: Update checkpoint<br/>(VERIFYING)
+    LangGraph->>PostgreSQL: Update checkpoint<br/>(COMPLETED)
+
+    Note over LangGraph,PythonService: Agent state updates via NATS
+    loop For each state transition
+        LangGraph->>Worker: Emit state event
+        Worker->>NATS: Publish event<br/>agent.chat.{chat_id}.{state}
+        NATS->>PythonService: Event received via subscription
+        PythonService->>PostgreSQL: Update chat state
+        PythonService->>WebUI: SSE event<br/>{state, data}
+        WebUI->>User: Update activity panel
+    end
+
+    LangGraph-->>Worker: Workflow complete
+    Worker->>PostgreSQL: Update AgentRun status
+    Worker->>NATS: Publish final event<br/>agent.chat.{chat_id}.completed
+    NATS->>PythonService: Final event received
+    PythonService->>WebUI: SSE final event
+    WebUI-->>User: Show final status
+
+    Note over User,ControlPlane: Chat termination flow
+    User->>WebUI: Close chat
+    WebUI->>PythonService: POST /api/chatkit/close/{chat_id}
+    PythonService->>NATS: Publish chat.close<br/>{chat_id}
+    NATS->>ControlPlane: Deliver chat.close message
+    ControlPlane->>ControlPlane: Stop and remove container
+    ControlPlane->>PostgreSQL: Update ChatContainer status
+    ControlPlane-->>NATS: ACK
+    NATS-->>PythonService: Message delivered
+    PythonService-->>WebUI: Chat closed
+    WebUI-->>User: Chat terminated

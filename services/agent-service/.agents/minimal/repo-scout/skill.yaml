@@ -1,0 +1,13 @@
+name: repo-scout
+version: 1.0.0
+description: Specialist agent that analyzes repositories and provides summaries
+agent_type: specialist
+capabilities:
+  - analyze repository structure
+  - detect programming languages
+  - identify frameworks and libraries
+  - detect build systems
+  - identify test frameworks
+  - summarize key files
+temperature: 0.2
+max_tokens: 2000

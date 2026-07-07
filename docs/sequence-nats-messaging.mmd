@@ -1,0 +1,65 @@
+sequenceDiagram
+    participant API as Agent API
+    participant NATS as NATS JetStream
+    participant Worker as Agent Worker
+    participant DLQ as Dead Letter Queue
+
+    Note over API,NATS: Command Publishing
+    API->>NATS: Connect to NATS
+    NATS-->>API: Connected
+    API->>NATS: Create stream AGENT_COMMANDS<br/>(subjects: agent.commands.>)
+    NATS-->>API: Stream created
+
+    API->>NATS: Publish command<br/>subject: agent.commands.run.start<br/>payload: {run_id, task, ...}<br/>headers: {message_id, run_id}
+    NATS-->>API: ACK (message persisted)
+
+    Note over NATS,Worker: Command Consumption
+    Worker->>NATS: Connect to NATS
+    NATS-->>Worker: Connected
+    Worker->>NATS: Subscribe to agent.commands.><br/>queue: agent-workers<br/>durable: agent-workers-consumer
+    NATS-->>Worker: Subscribed
+
+    NATS->>Worker: Deliver message
+    Worker->>Worker: Check message_id idempotency
+    alt Message already processed
+        Worker->>NATS: ACK (skip processing)
+    else Message not processed
+        Worker->>Worker: Process command
+        Worker->>Worker: Mark message_id as processed
+        Worker->>NATS: ACK (success)
+    end
+
+    alt Processing fails
+        Worker->>NATS: NAK (negative acknowledge)
+        NATS->>NATS: Retry with exponential backoff
+        NATS->>Worker: Redeliver message
+        alt Max retries exceeded
+            NATS->>DLQ: Move to dead letter queue
+        end
+    end
+
+    Note over Worker,NATS: Event Publishing
+    Worker->>NATS: Create stream AGENT_EVENTS<br/>(subjects: agent.events.>)
+    NATS-->>Worker: Stream created
+
+    loop For each workflow event
+        Worker->>NATS: Publish event<br/>subject: agent.events.{run_id}<br/>payload: {event_type, data, ...}<br/>headers: {message_id, run_id}
+        NATS-->>Worker: ACK (event persisted)
+    end
+
+    Note over NATS,API: Event Consumption
+    API->>NATS: Subscribe to agent.events.{run_id}
+    NATS->>API: Deliver event
+    API->>PostgreSQL: Store event
+    API->>NATS: ACK
+
+    Note over API,NATS: Durability & Recovery
+    API->>NATS: API restart
+    NATS->>NATS: Messages preserved in JetStream
+    API->>NATS: Reconnect
+    NATS-->>API: Resume delivery
+
+    Worker->>NATS: Worker crash
+    NATS->>NATS: Unacknowledged messages retained
+    Worker->>NATS: Worker restart
+    NATS->>Worker: Redeliver unacked messages

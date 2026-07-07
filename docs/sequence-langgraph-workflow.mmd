@@ -1,0 +1,113 @@
+sequenceDiagram
+    participant LangGraph as LangGraph Workflow
+    participant State as EngineeringState
+    participant Specialists as Specialist Agents
+    participant Implementers as Implementation Agents
+    participant Validators as Validation Agents
+    participant Workspace as Docker Workspace
+    participant PostgreSQL as PostgreSQL
+
+    LangGraph->>State: Initialize state<br/>(run_id, task, status=CREATED)
+    LangGraph->>PostgreSQL: Save checkpoint (CREATED)
+
+    Note over LangGraph: CREATED Node
+    LangGraph->>State: Set status=PREPARING_WORKSPACE
+    LangGraph->>PostgreSQL: Save checkpoint
+
+    Note over LangGraph: PREPARING_WORKSPACE Node
+    LangGraph->>Workspace: Create workspace container
+    Workspace->>Workspace: Clone repository
+    Workspace->>Workspace: Create run-specific branch
+    Workspace-->>LangGraph: workspace_id, branch_name
+    LangGraph->>State: Set workspace_id, workspace_branch
+    LangGraph->>State: Set status=SCOUTING
+    LangGraph->>PostgreSQL: Save checkpoint
+
+    Note over LangGraph: SCOUTING Node
+    LangGraph->>Specialists: repo-scout agent
+    Specialists->>Workspace: Read repository files
+    Workspace-->>Specialists: File contents
+    Specialists-->>LangGraph: RepositorySummary
+    LangGraph->>State: Set repository_summary
+    LangGraph->>State: Set status=PLANNING
+    LangGraph->>PostgreSQL: Save checkpoint
+
+    Note over LangGraph: PLANNING Node
+    LangGraph->>Specialists: skills-lead agent
+    Specialists-->>LangGraph: SkillsLeadDecision<br/>(selected_agents)
+    LangGraph->>Specialists: solution-planner agent
+    Specialists-->>LangGraph: ImplementationPlan
+    LangGraph->>State: Set selected_agents, implementation_plan
+    LangGraph->>State: Set status=DESIGNING
+    LangGraph->>PostgreSQL: Save checkpoint
+
+    Note over LangGraph: DESIGNING Node
+    LangGraph->>Specialists: Design agent
+    Specialists-->>LangGraph: DesignSpec
+    LangGraph->>State: Set design_spec
+    LangGraph->>State: Set status=IMPLEMENTING
+    LangGraph->>PostgreSQL: Save checkpoint
+
+    Note over LangGraph: IMPLEMENTING Node
+    par Parallel Implementation
+        LangGraph->>Implementers: Go developer agent
+        Implementers->>Workspace: Write/patch files
+        Implementers->>Workspace: Run git diff
+        Implementers-->>LangGraph: ImplementationResult
+    and
+        LangGraph->>Implementers: Angular developer agent
+        Implementers->>Workspace: Write/patch files
+        Implementers->>Workspace: Run git diff
+        Implementers-->>LangGraph: ImplementationResult
+    and
+        LangGraph->>Implementers: DevOps developer agent
+        Implementers->>Workspace: Write/patch files
+        Implementers->>Workspace: Run git diff
+        Implementers-->>LangGraph: ImplementationResult
+    end
+    LangGraph->>State: Set implementation_results, code_diff
+    LangGraph->>State: Set status=TESTING
+    LangGraph->>PostgreSQL: Save checkpoint
+
+    Note over LangGraph: TESTING Node
+    LangGraph->>Validators: Backend test engineer
+    Validators->>Workspace: Run tests (allowlist)
+    Workspace-->>Validators: Test output
+    Validators-->>LangGraph: TestResult
+    LangGraph->>Validators: Angular test engineer
+    Validators->>Workspace: Run tests (allowlist)
+    Workspace-->>Validators: Test output
+    Validators-->>LangGraph: TestResult
+    LangGraph->>State: Set test_results
+    LangGraph->>State: Set status=REVIEWING
+    LangGraph->>PostgreSQL: Save checkpoint
+
+    Note over LangGraph: REVIEWING Node
+    LangGraph->>Validators: Code reviewer agent
+    Validators-->>LangGraph: ReviewResult<br/>(findings with severity)
+    LangGraph->>State: Set review_results
+    LangGraph->>State: Set status=VERIFYING
+    LangGraph->>PostgreSQL: Save checkpoint
+
+    Note over LangGraph: VERIFYING Node
+    LangGraph->>Validators: Completion verifier agent
+    Validators-->>LangGraph: VerificationResult<br/>(criteria results)
+    LangGraph->>State: Set verification_results
+
+    alt Verification passed
+        LangGraph->>State: Set status=COMPLETED
+        LangGraph->>PostgreSQL: Save checkpoint (COMPLETED)
+    else Verification failed & repair_count < max
+        LangGraph->>State: Set status=REPAIRING<br/>increment repair_count
+        LangGraph->>PostgreSQL: Save checkpoint (REPAIRING)
+        Note over LangGraph: REPAIRING Node
+        LangGraph->>State: Set status=IMPLEMENTING
+        LangGraph->>PostgreSQL: Save checkpoint
+    else Verification failed & repair_count >= max
+        LangGraph->>State: Set status=FAILED
+        LangGraph->>PostgreSQL: Save checkpoint (FAILED)
+    end
+
+    Note over LangGraph: Terminal State Reached
+    LangGraph->>Workspace: Cleanup workspace
+    Workspace->>Workspace: Remove container & volume

@@ -1,0 +1,41 @@
+sequenceDiagram
+    participant User
+    participant WebUI as Angular UI
+    participant WorkflowAPI as Workflow API
+    participant PostgreSQL as PostgreSQL
+    participant NATS as NATS JetStream
+    participant Worker as Agent Worker
+    participant LangGraph as LangGraph Workflow
+    participant Workspace as Docker Workspace
+
+    Note over LangGraph: Workflow running in any phase
+    LangGraph->>PostgreSQL: Checkpoint saved<br/>(current state)
+
+    User->>WebUI: Click Cancel button
+    WebUI->>WorkflowAPI: POST /runs/{run_id}/cancel
+    WorkflowAPI->>PostgreSQL: Update AgentRun<br/>(cancel_requested_at=now)
+    WorkflowAPI->>NATS: Publish command<br/>agent.commands.run.cancel
+    WorkflowAPI-->>WebUI: {status: cancellation_requested}
+    WebUI-->>User: Show cancelling status
+
+    Worker->>NATS: Receive cancel command
+    Worker->>PostgreSQL: Mark cancel_requested=true in state
+
+    Note over LangGraph: Next node boundary check
+    LangGraph->>LangGraph: should_cancel(state)
+    alt cancel_requested == true
+        LangGraph->>LangGraph: Set status=CANCELLED
+        LangGraph->>PostgreSQL: Save checkpoint (CANCELLED)
+        LangGraph->>Workspace: Cleanup workspace
+        Workspace->>Workspace: Stop container
+        Workspace->>Workspace: Remove volume
+        Workspace-->>LangGraph: Cleanup complete
+        LangGraph->>PostgreSQL: Update AgentRun<br/>(status: CANCELLED)
+        LangGraph->>NATS: Publish event<br/>agent.events.{run_id}<br/>{type: run_cancelled}
+    else cancel_requested == false
+        LangGraph->>LangGraph: Continue to next phase
+    end
+
+    NATS->>WorkflowAPI: Event: run_cancelled
+    WorkflowAPI->>WebUI: SSE event<br/>{type: run_cancelled}
+    WebUI-->>User: Show cancelled status

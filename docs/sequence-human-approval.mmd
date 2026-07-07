@@ -1,0 +1,44 @@
+sequenceDiagram
+    participant User
+    participant WebUI as Angular UI
+    participant LangGraph as LangGraph Workflow
+    participant PostgreSQL as PostgreSQL
+    participant WorkflowAPI as Workflow API
+    participant Agent as Specialist Agent
+
+    Note over LangGraph: Workflow executing in IMPLEMENTING phase
+    LangGraph->>Agent: Execute task
+    Agent->>Agent: Detects protected action<br/>(push, PR, network, credentials)
+
+    Agent->>LangGraph: Request approval<br/>(langgraph.types.interrupt)
+    LangGraph->>LangGraph: Set status=WAITING_APPROVAL
+    LangGraph->>PostgreSQL: Save checkpoint with interrupt
+    LangGraph->>PostgreSQL: Create AgentApproval record<br/>(decision: pending)
+
+    LangGraph->>WorkflowAPI: Publish event<br/>approval_requested
+    WorkflowAPI->>WebUI: SSE event<br/>{type: approval_requested,<br/>approval_id, tool, description}
+
+    WebUI->>User: Show approval dialog
+    User->>WebUI: Review and decide
+
+    alt User approves
+        User->>WebUI: Click Approve
+        WebUI->>WorkflowAPI: POST /runs/{run_id}/approvals/{id}/approve<br/>{decision: approved, decided_by}
+        WorkflowAPI->>PostgreSQL: Update AgentApproval<br/>(decision: approved, decided_at)
+        WorkflowAPI->>PostgreSQL: Update checkpoint<br/>(approval_decisions[last]=approved)
+        WorkflowAPI->>LangGraph: Resume with Command<br/>(approval_decision: approved)
+        LangGraph->>Agent: Execute protected action
+        Agent-->>LangGraph: Action completed
+        LangGraph->>PostgreSQL: Save checkpoint<br/>(IMPLEMENTING)
+    else User rejects
+        User->>WebUI: Click Reject
+        WebUI->>WorkflowAPI: POST /runs/{run_id}/approvals/{id}/reject<br/>{decision: rejected, decided_by}
+        WorkflowAPI->>PostgreSQL: Update AgentApproval<br/>(decision: rejected, decided_at)
+        WorkflowAPI->>PostgreSQL: Update checkpoint<br/>(approval_decisions[last]=rejected)
+        WorkflowAPI->>LangGraph: Resume with Command<br/>(approval_decision: rejected)
+        LangGraph->>LangGraph: Set status=FAILED
+        LangGraph->>PostgreSQL: Save checkpoint (FAILED)
+    end
+
+    WorkflowAPI->>WebUI: SSE event<br/>{type: approval_decided,<br/>decision}
+    WebUI->>User: Update UI with result

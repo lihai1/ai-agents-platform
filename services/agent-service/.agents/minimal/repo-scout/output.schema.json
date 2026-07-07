@@ -1,0 +1,64 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "primary_language": {
+      "type": "string",
+      "description": "Main programming language"
+    },
+    "frameworks": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Frameworks and libraries detected"
+    },
+    "project_type": {
+      "type": "string",
+      "description": "Type of project: web, cli, library, etc."
+    },
+    "total_files": {
+      "type": "integer",
+      "description": "Total number of files"
+    },
+    "test_files": {
+      "type": "integer",
+      "description": "Number of test files"
+    },
+    "main_source_files": {
+      "type": "integer",
+      "description": "Number of main source files"
+    },
+    "config_files": {
+      "type": "integer",
+      "description": "Number of configuration files"
+    },
+    "directory_structure": {
+      "type": "object",
+      "description": "Simplified directory structure"
+    },
+    "key_files": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Important files to be aware of"
+    },
+    "build_system": {
+      "type": "string",
+      "description": "Build system: make, npm, cargo, etc."
+    },
+    "test_framework": {
+      "type": "string",
+      "description": "Test framework detected"
+    },
+    "dependencies": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Key dependencies"
+    }
+  },
+  "required": ["primary_language", "frameworks", "project_type", "total_files", "test_files", "main_source_files", "config_files", "directory_structure", "key_files"]
+}

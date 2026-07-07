@@ -1,0 +1,111 @@
+version: '3.8'
+
+services:
+  nats:
+    image: nats:latest
+    container_name: agentic-nats
+    ports:
+      - "4222:4222"
+    command: "-js"
+    networks:
+      - agentic-network
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: agentic-postgres
+    environment:
+      POSTGRES_USER: agentic
+      POSTGRES_PASSWORD: agentic
+      POSTGRES_DB: agentic
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agentic"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - agentic-network
+
+  control-plane:
+    build:
+      context: ./services/control-plane
+      dockerfile: Dockerfile
+    container_name: agentic-control-plane
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgres://agentic:agentic@postgres:5432/agentic?sslmode=disable
+      JWT_SECRET: dev-secret-change-in-production
+      PORT: 8080
+      NATS_URL: nats://nats:4222
+      MOCK_DOCKER: "true"
+      DOCKER_HOST: http://host.docker.internal:2375
+      DISABLE_AUTH: "true"
+    ports:
+      - "8080:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - agentic-network
+    profiles:
+      - full
+
+  agent-service:
+    build:
+      context: ./services/agent-service
+      dockerfile: Dockerfile
+    container_name: agentic-agent-service
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgresql+asyncpg://agentic:agentic@postgres:5432/agentic
+      JWT_SECRET: dev-secret-change-in-production
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+      CONTROL_PLANE_URL: http://control-plane:8080
+      NATS_URL: nats://nats:4222
+      DISABLE_AUTH: "true"
+    ports:
+      - "8000:8000"
+    networks:
+      - agentic-network
+
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+    container_name: agentic-web
+    depends_on:
+      - agent-service
+    environment:
+      NODE_ENV: production
+      MOCK_MODE: "true"
+    ports:
+      - "4200:80"
+    networks:
+      - agentic-network
+
+  orchestrator:
+    build:
+      context: ./services/agent-service
+      dockerfile: Dockerfile.orchestrator
+    image: agentic-orchestrator:latest
+    networks:
+      - agentic-network
+
+volumes:
+  postgres_data:
+
+networks:
+  agentic-network:
+    driver: bridge

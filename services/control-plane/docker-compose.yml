@@ -1,0 +1,60 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: agentic-postgres
+    environment:
+      POSTGRES_USER: agentic
+      POSTGRES_PASSWORD: agentic
+      POSTGRES_DB: agentic
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agentic"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  migrate:
+    image: migrate/migrate:latest
+    container_name: agentic-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./migrations:/migrations
+    command: -path=/migrations -database="postgres://agentic:agentic@postgres:5432/agentic?sslmode=disable" up
+
+  nats:
+    image: nats:latest
+    container_name: agentic-nats
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: agentic-backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      nats:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgres://agentic:agentic@postgres:5432/agentic?sslmode=disable
+      JWT_SECRET: dev-secret-change-in-production
+      PORT: 8080
+      DISABLE_AUTH: "true"
+      NATS_URL: nats://nats:4222
+    ports:
+      - "8080:8080"
+
+volumes:
+  postgres_data:

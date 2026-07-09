@@ -15,23 +15,32 @@ async def get_event_stream(chat_id: str) -> asyncio.Queue:
     async with streams_lock:
         if chat_id not in event_streams:
             event_streams[chat_id] = asyncio.Queue(maxsize=1000)
+            print(f"Created new event stream for chat_id: {chat_id}")
+        else:
+            print(f"Reusing existing event stream for chat_id: {chat_id}")
         return event_streams[chat_id]
 
 
 async def push_event(chat_id: str, event: dict) -> None:
     """Push an event to the chat's event queue"""
     async with streams_lock:
-        if chat_id in event_streams:
+        # Auto-create event stream if it doesn't exist
+        if chat_id not in event_streams:
+            event_streams[chat_id] = asyncio.Queue(maxsize=1000)
+            print(f"Auto-created event stream for chat_id: {chat_id}")
+        
+        try:
+            # Non-blocking put, drop if queue is full
+            event_streams[chat_id].put_nowait(event)
+            print(f"Pushed event to stream for chat_id: {chat_id}, event_type: {event.get('event_type')}")
+        except asyncio.QueueFull:
+            # Queue is full, drop oldest event
             try:
-                # Non-blocking put, drop if queue is full
+                event_streams[chat_id].get_nowait()
                 event_streams[chat_id].put_nowait(event)
-            except asyncio.QueueFull:
-                # Queue is full, drop oldest event
-                try:
-                    event_streams[chat_id].get_nowait()
-                    event_streams[chat_id].put_nowait(event)
-                except asyncio.QueueEmpty:
-                    pass
+                print(f"Queue full, dropped oldest event for chat_id: {chat_id}")
+            except asyncio.QueueEmpty:
+                pass
 
 
 async def remove_event_stream(chat_id: str) -> None:

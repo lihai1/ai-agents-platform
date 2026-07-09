@@ -20,6 +20,7 @@ type CreateContainerRequest struct {
 	RunID        string `json:"run_id"`
 	RepositoryID string `json:"repository_id"`
 	MockMode     bool   `json:"mock_mode"`
+	AgentType    string `json:"agent_type"` // "multi-agent" or "single-agent"
 }
 
 func (h *ChatContainerHandler) CreateContainer(w http.ResponseWriter, r *http.Request) {
@@ -29,7 +30,18 @@ func (h *ChatContainerHandler) CreateContainer(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	container, err := h.containerService.CreateContainer(req.RunID, req.RepositoryID, req.MockMode)
+	var container interface{}
+	var err error
+
+	// TODO: Make agent type selection more robust with validation
+	// Currently defaults to multi-agent if not specified
+	if req.AgentType == "single-agent" {
+		container, err = h.containerService.CreateSingleAgentContainer(req.RunID, req.RepositoryID, req.MockMode)
+	} else {
+		// Default to multi-agent mode
+		container, err = h.containerService.CreateContainer(req.RunID, req.RepositoryID, req.MockMode)
+	}
+
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

@@ -5,7 +5,7 @@ from sqlalchemy import select
 from internal.db import get_session
 from internal.models import AgentRun
 from internal.messaging.nats import NATSMessaging
-from internal.chatkit.context import context_from_request
+from internal.chatkit.context import context_from_request, RequestContext
 from internal.chatkit.server import AegisChatKitServer
 from internal.chatkit.store import PostgreSQLStore
 from internal.chatkit.nats_bridge import NatsBridge
@@ -36,11 +36,11 @@ async def get_chatkit_server() -> AegisChatKitServer:
     """Get or create ChatKit server"""
     global chatkit_server
     if chatkit_server is None:
-        from internal.db import get_session
+        from internal.db import AsyncSessionLocal
         # Ensure NATS client is initialized
         if nats_client is None:
             await get_nats_client()
-        store = PostgreSQLStore(get_session)
+        store = PostgreSQLStore(AsyncSessionLocal)
         nats_bridge = NatsBridge(nats_client)
         chatkit_server = AegisChatKitServer(store=store, nats_bridge=nats_bridge)
     return chatkit_server
@@ -49,8 +49,21 @@ async def get_chatkit_server() -> AegisChatKitServer:
 @chatkit_router.post("/")
 async def chatkit_endpoint(request: Request):
     """ChatKit endpoint for streaming responses"""
-    context = context_from_request(request)
+    print("ChatKit endpoint: POST request received")
     body = await request.body()
+    print(f"ChatKit endpoint: Request body: {body}")
+    base_context = context_from_request(request)
+    ui_request = json.loads(body) if body else {}
+    context = RequestContext(
+        user_subject=base_context.user_subject,
+        org_id=base_context.org_id,
+        request_id=base_context.request_id,
+        authorization=base_context.authorization,
+        project_id=ui_request.get("project_id"),
+        repository_id=ui_request.get("repository_id"),
+        mock_mode=bool(ui_request.get("mock_mode", False)),
+        llm_provider=ui_request.get("llm_provider", base_context.llm_provider),
+    )
     
     print(f"ChatKit endpoint called, body: {body}")
     
@@ -65,6 +78,19 @@ async def chatkit_endpoint(request: Request):
         message = ui_request.get("message", "")
         
         print(f"Thread ID: {thread_id}, Message: {message}")
+        
+        # Ensure thread exists in store
+        server = await get_chatkit_server()
+        existing_thread = await server.store.get_thread(thread_id)
+        if not existing_thread:
+            await server.store.create_thread({
+                "id": thread_id,
+                "user_subject": base_context.user_subject,
+                "project_id": context.project_id,
+                "repository_id": context.repository_id,
+                "task": message,
+            })
+            print(f"Created new thread in store: {thread_id}")
         
         # Create thread metadata
         thread = ThreadMetadata(
@@ -84,11 +110,7 @@ async def chatkit_endpoint(request: Request):
         
         print(f"User message created: {user_message}")
         
-        # Get ChatKit server and call respond()
-        print("Getting ChatKit server...")
-        server = await get_chatkit_server()
-        print(f"ChatKit server obtained: {server}")
-        
+        # Call server.respond()
         print("Calling server.respond...")
         event_stream = server.respond(thread, user_message, context)
         print(f"Event stream created: {event_stream}")
@@ -114,7 +136,8 @@ async def get_thread(
     """Get thread and messages from PostgreSQL store"""
     try:
         from internal.chatkit.store import PostgreSQLStore
-        store = PostgreSQLStore(get_session)
+        from internal.db import AsyncSessionLocal
+        store = PostgreSQLStore(AsyncSessionLocal)
         
         thread = await store.get_thread(run_id)
         if not thread:

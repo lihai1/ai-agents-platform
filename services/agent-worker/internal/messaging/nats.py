@@ -1,7 +1,10 @@
 """NATS JetStream messaging for worker separation"""
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
+import os
 from typing import Optional, Dict, Any, Callable
 from nats.aio.client import Client as NATSClient
 from nats.errors import Error as NATSError
@@ -9,6 +12,24 @@ from datetime import datetime, timedelta
 import uuid
 
 logger = logging.getLogger(__name__)
+
+# Module-level NATS client singleton for event publishing
+_nats_client: Optional[NATSMessaging] = None
+
+def get_nats_client() -> NATSMessaging:
+    """Get or create the global NATS client singleton"""
+    global _nats_client
+    if _nats_client is None:
+        nats_url = os.getenv("NATS_URL", "nats://localhost:4222")
+        service_id = os.getenv("SERVICE_ID", "agent-worker")
+        worker_id = os.getenv("WORKER_ID", str(uuid.uuid4()))
+        _nats_client = NATSMessaging(nats_url=nats_url, service_id=service_id, worker_id=worker_id)
+    return _nats_client
+
+def set_nats_client(client: NATSMessaging) -> None:
+    """Set the global NATS client singleton (for testing or manual setup)"""
+    global _nats_client
+    _nats_client = client
 
 
 class NATSMessaging:
@@ -20,11 +41,15 @@ class NATSMessaging:
         stream_name: str = "AGENT_COMMANDS",
         event_stream_name: str = "AGENT_EVENTS",
         orchestration_stream_name: str = "AGENT_ORCHESTRATION",
+        service_id: str = "agent-worker",
+        worker_id: str = "default-worker",
     ):
         self.nats_url = nats_url
         self.stream_name = stream_name
         self.event_stream_name = event_stream_name
         self.orchestration_stream_name = orchestration_stream_name
+        self.service_id = service_id
+        self.worker_id = worker_id
         self.nc: Optional[NATSClient] = None
         self.js = None
         
@@ -182,17 +207,16 @@ class NATSMessaging:
         if not self.js:
             raise RuntimeError("NATS not connected")
         
-        consumer_name = f"{queue_group}-consumer"
-        
-        # Subscribe to run-specific subject if run_id provided
+        # Create unique durable consumer name with service_id, worker_id, and run_id
         if run_id:
             subject = f"agent.chat.{run_id}.>"
-            consumer_name = f"{queue_group}-{run_id}-consumer"
+            consumer_name = f"{self.service_id}-{self.worker_id}-{queue_group}-{run_id}-consumer"
         else:
             subject = f"agent.chat.>"
+            consumer_name = f"{self.service_id}-{self.worker_id}-{queue_group}-consumer"
         
         try:
-            # Create consumer
+            # Create subscription with JetStream
             await self.js.subscribe(
                 subject=subject,
                 cb=await self._create_command_handler(command_handler),
@@ -250,9 +274,12 @@ class NATSMessaging:
         if not self.js:
             raise RuntimeError("NATS not connected")
         
+        # Create unique durable consumer name with service_id, worker_id, and run_id
         subject = f"agent.events.{run_id}.>"
+        consumer_name = f"{self.service_id}-{self.worker_id}-events-{run_id}-consumer"
         
         try:
+            # Create subscription with JetStream
             await self.js.subscribe(
                 subject=subject,
                 cb=await self._create_event_handler(event_handler),
@@ -373,8 +400,10 @@ class NATSMessaging:
             raise RuntimeError("NATS not connected")
         
         subject = f"agent.chat.{run_id}.>"
+        consumer_name = f"{self.service_id}-{self.worker_id}-chat-{run_id}-consumer"
         
         try:
+            # Create subscription with JetStream
             await self.js.subscribe(
                 subject=subject,
                 cb=await self._create_event_handler(event_handler),
@@ -395,8 +424,10 @@ class NATSMessaging:
             raise RuntimeError("NATS not connected")
         
         subject = f"agent.chat.{run_id}.user.events"
+        consumer_name = f"{self.service_id}-{self.worker_id}-orch-{run_id}-consumer"
         
         try:
+            # Create subscription with JetStream
             await self.js.subscribe(
                 subject=subject,
                 cb=await self._create_command_handler(command_handler),

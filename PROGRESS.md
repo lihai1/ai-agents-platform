@@ -470,9 +470,74 @@
 - `apps/web/src/assets/chatkit-client.js` (standalone ChatKit protocol parsing)
 - `docker-compose.yml` (mock-worker service, MOCK_DOCKER configuration)
 
+### Phase 13: Architecture Refactoring - Service Separation ✅
+
+**Deliverables Completed:**
+- ✅ Removed LangGraph workflow execution code from agent-service (graph, nodes, router, state, checkpointer, approvals)
+- ✅ Removed workflow router registration from agent-service app/main.py
+- ✅ Moved event_streams.py to internal/event_streams.py (SSE streaming infrastructure)
+- ✅ Updated all imports to use new event_streams location
+- ✅ Kept internal/agents/ as shared library (both services use specialist agents)
+- ✅ Updated security tests to remove workflow dependencies
+- ✅ Verified no remaining internal.workflow imports in agent-service
+- ✅ agent-service now handles: HTTP API, NATS messaging, SSE streaming, PostgreSQL store
+- ✅ agent-worker handles: LangGraph workflow execution, real agent implementations, workspace operations
+
+**Acceptance Criteria Met:**
+- ✅ agent-service has no workflow execution code (only API + messaging layer)
+- ✅ agent-worker contains all LangGraph workflow code (execution layer)
+- ✅ agent-service publishes NATS commands (chat.start, run.start)
+- ✅ agent-worker subscribes to NATS commands and executes workflows
+- ✅ agent-service subscribes to worker events and streams to UI via SSE
+- ✅ Shared agent classes remain accessible to both services
+- ✅ No import errors after refactoring
+- ✅ Architecture aligns with design documentation
+
+**Files Modified:**
+- `services/agent-service/app/main.py` (removed workflow router import and registration)
+- `services/agent-service/internal/event_streams.py` (moved from internal/workflow/)
+- `services/agent-service/internal/chatkit/server.py` (updated import path)
+- `services/agent-service/tests/security/test_authorization.py` (removed workflow dependency)
+- `services/agent-service/internal/workflow/` (entire directory removed)
+
+**Architecture Now Correct:**
+- **agent-service**: HTTP API → NATS publisher/subscriber → SSE streaming → PostgreSQL store
+- **agent-worker**: NATS subscriber → LangGraph workflow execution → Real agent implementations → Workspace operations
+
+**Acceptance Criteria Met:**
+- ✅ Chat message triggers container creation (chat.start → control plane)
+- ✅ Control plane creates container successfully (mock mode)
+- ✅ Control plane publishes agent start signal (agent.chat.{chat_id}.start)
+- ✅ Worker receives and processes commands (NATS subscription)
+- ✅ Worker executes workflow (LangGraph with checkpointer)
+- ✅ State events are published (real-time progress updates)
+- ✅ Complete message flow works end-to-end (user → agent execution)
+- ✅ ChatKit streaming response reaches the UI via SSE
+- ✅ UI displays progress updates and final assistant message
+- ✅ agent-worker integration tests pass (10/10)
+- ✅ agent-service integration tests pass (8/8)
+
+**Files Modified:**
+- `services/agent-service/internal/messaging/nats.py` (plain NATS for chat.start/chat.close)
+- `services/agent-service/app/worker.py` (event type handling)
+- `services/agent-service/internal/chatkit/router.py` (container creation trigger, SSE endpoint)
+- `services/agent-service/internal/chatkit/server.py` (AegisChatKitServer)
+- `services/agent-service/internal/chatkit/nats_bridge.py` (NATS event subscription bridge)
+- `services/agent-service/internal/chatkit/event_mapper.py` (ChatKit event mapping)
+- `services/agent-service/internal/chatkit/store.py` (PostgreSQL store)
+- `services/agent-service/internal/workflow/checkpointer.py` (MemorySaver)
+- `services/agent-service/mock_worker.py` (mock worker for first-flow)
+- `services/agent-service/internal/workflow/event_streams.py` (async event streaming)
+- `services/agent-service/app/main.py` (ChatKit router inclusion)
+- `apps/web/nginx.conf` (SSE proxy configuration)
+- `apps/web/proxy.conf.json` (dev proxy for /chatkit)
+- `apps/web/src/app/chat/chat.component.ts` (mock mode toggle, ChatKit protocol parsing)
+- `apps/web/src/assets/chatkit-client.js` (standalone ChatKit protocol parsing)
+- `docker-compose.yml` (mock-worker service, MOCK_DOCKER configuration)
+
 ## Overall Progress
 
-**Completed:** 12/12 phases (100%)
+**Completed:** 13/13 phases (100%)
 **In Progress:** 0 phases
 **Remaining:** 0 phases (0%)
 

@@ -36,29 +36,12 @@ class NatsBridge:
                 "repository_id": metadata.get("repository_id", ""),
                 "task": prompt,
                 "run_id": run_id,
+                "mock_mode": metadata.get("mock_mode", False),
+                "llm_provider": metadata.get("llm_provider", "ollama"),
             },
         )
 
     async def subscribe_run_events(self, run_id: str) -> AsyncIterator[dict[str, Any]]:
-        self._event_queue = asyncio.Queue()
-        
-        print(f"NATS bridge: Setting up subscriptions for run_id: {run_id}")
-        
-        # Subscribe to agent.events.>
-        await self.nats.subscribe_to_events(
-            event_handler=lambda event: (print(f"NATS bridge: Received event via subscribe_to_events: {event}"), self._event_queue.put_nowait(event)),
-            run_id=run_id,
-        )
-        
-        # Subscribe to agent.chat.{run_id}.>
-        await self.nats.subscribe_to_chat_events(
-            run_id=run_id,
-            event_handler=lambda event: (print(f"NATS bridge: Received event via subscribe_to_chat_events: {event}"), self._event_queue.put_nowait(event)),
-        )
-        
-        print(f"NATS bridge: Subscriptions set up for run_id: {run_id}")
-        
-        while True:
-            event = await self._event_queue.get()
-            print(f"NATS bridge: Yielding event from queue: {event}")
-            yield event
+        # This method is no longer used - ChatKit server now uses global event stream
+        # Kept for backward compatibility but not called
+        raise NotImplementedError("subscribe_run_events is deprecated - use global event stream instead")

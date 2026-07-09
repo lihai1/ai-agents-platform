@@ -1,5 +1,5 @@
 from typing import Dict, Any
-from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain.agents import create_agent
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
@@ -16,9 +16,11 @@ import json
 
 class SkillsLeadAgent:
     """Agent that selects appropriate specialists for a task"""
-    
-    def __init__(self, model_name: str = "gpt-4"):
-        self.model = get_model(model_name)
+
+    def __init__(self, model_name: str = "gpt-4", mock_mode: bool = False, llm_provider: str = None):
+        self.model = get_model(model_name=model_name, mock_mode=mock_mode, llm_provider=llm_provider)
+        self.mock_mode = mock_mode
+        self.llm_provider = llm_provider
         self.available_specialists = [
             "go-developer",
             "angular-developer",
@@ -62,10 +64,12 @@ Analyze the task and repository summary to determine which specialists are neede
 
 class RepoScoutAgent:
     """Agent that analyzes a repository"""
-    
-    def __init__(self, repository_path, model_name: str = "gpt-4"):
+
+    def __init__(self, repository_path, model_name: str = "gpt-4", mock_mode: bool = False, llm_provider: str = None):
         self.repository_path = repository_path
-        self.model = get_model(model_name)
+        self.model = get_model(model_name=model_name, mock_mode=mock_mode, llm_provider=llm_provider)
+        self.mock_mode = mock_mode
+        self.llm_provider = llm_provider
         self.repo_tools = ReadOnlyRepositoryTools(repository_path)
     
     async def analyze_repository(self) -> RepositorySummary:
@@ -160,9 +164,11 @@ Provide a comprehensive repository summary.""")
 
 class SolutionPlannerAgent:
     """Agent that creates implementation plans"""
-    
-    def __init__(self, model_name: str = "gpt-4"):
-        self.model = get_model(model_name)
+
+    def __init__(self, model_name: str = "gpt-4", mock_mode: bool = False, llm_provider: str = None):
+        self.model = get_model(model_name=model_name, mock_mode=mock_mode, llm_provider=llm_provider)
+        self.mock_mode = mock_mode
+        self.llm_provider = llm_provider
     
     async def create_plan(
         self,

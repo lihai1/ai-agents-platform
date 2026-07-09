@@ -64,13 +64,25 @@ func (d *DockerHTTPOrchestrator) CreateContainer(config ContainerConfig) (*Conta
 	}
 
 	// Create container via Docker API
+	networkMode := config.Network
+	if networkMode == "" {
+		networkMode = "bridge"
+	}
 	createReq := map[string]interface{}{
 		"Image": config.Image,
 		"Env":   env,
 		"Cmd":   []string{"/app/container-start.sh"},
 		"HostConfig": map[string]interface{}{
-			"NetworkMode": "bridge",
+			"NetworkMode": networkMode,
 		},
+	}
+
+	if config.Network != "" {
+		createReq["NetworkingConfig"] = map[string]interface{}{
+			"EndpointsConfig": map[string]interface{}{
+				config.Network: map[string]interface{}{},
+			},
+		}
 	}
 
 	body, err := json.Marshal(createReq)

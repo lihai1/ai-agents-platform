@@ -1,6 +1,5 @@
 """Tests for authorization boundaries"""
 import pytest
-from internal.workflow.router import CreateRunRequest
 
 
 def describe_cross_user_run_access():

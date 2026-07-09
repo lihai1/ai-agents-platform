@@ -4,6 +4,10 @@ import logging
 import os
 import subprocess
 import asyncio
+import json
+import uuid
+from datetime import datetime
+from internal.messaging.nats import get_nats_client
 
 logger = logging.getLogger(__name__)
 
@@ -11,8 +15,46 @@ logger = logging.getLogger(__name__)
 class WorkspaceTools:
     """Tools for interacting with the container workspace (local file system)"""
     
-    def __init__(self, workspace_path: str = "/workspace"):
+    def __init__(self, workspace_path: str = "/workspace", run_id: Optional[str] = None):
         self.workspace_path = workspace_path
+        self.run_id = run_id
+    
+    async def _publish_tool_event(self, tool_name: str, action: str, details: Dict[str, Any]):
+        """Publish tool execution event to NATS"""
+        if not self.run_id:
+            return
+        
+        try:
+            nats = get_nats_client()
+            if nats.js is None:
+                await nats.connect()
+            if not nats.js:
+                return
+            
+            # Publish to agent.events.{run_id}.tool.executed
+            event = {
+                "message_id": str(uuid.uuid4()),
+                "event_type": "tool.executed",
+                "run_id": self.run_id,
+                "payload": {
+                    "tool": tool_name,
+                    "action": action,
+                    "details": details,
+                    "timestamp": datetime.utcnow().isoformat(),
+                },
+                "timestamp": datetime.utcnow().isoformat(),
+                "schema_version": "1.0",
+            }
+            
+            subject = f"agent.events.{self.run_id}.tool.executed"
+            await nats.js.publish(
+                subject=subject,
+                payload=json.dumps(event).encode(),
+                headers={"run_id": self.run_id}
+            )
+            logger.info(f"[WORKSPACE] Published tool event: {tool_name} - {action}")
+        except Exception as e:
+            logger.error(f"[WORKSPACE] Failed to publish tool event: {e}")
     
     async def write_file(
         self,
@@ -28,6 +70,8 @@ class WorkspaceTools:
             with open(full_path, "w") as f:
                 f.write(content)
             
+            await self._publish_tool_event("write_file", "write", {"file_path": file_path})
+            
             return {
                 "success": True,
                 "file_path": file_path,
@@ -35,6 +79,7 @@ class WorkspaceTools:
             }
         except Exception as e:
             logger.error(f"Failed to write file: {e}")
+            await self._publish_tool_event("write_file", "error", {"file_path": file_path, "error": str(e)})
             return {
                 "success": False,
                 "file_path": file_path,
@@ -53,6 +98,8 @@ class WorkspaceTools:
             with open(full_path, "r") as f:
                 content = f.read()
             
+            await self._publish_tool_event("read_file", "read", {"file_path": file_path})
+            
             return {
                 "success": True,
                 "file_path": file_path,
@@ -60,6 +107,7 @@ class WorkspaceTools:
             }
         except Exception as e:
             logger.error(f"Failed to read file: {e}")
+            await self._publish_tool_event("read_file", "error", {"file_path": file_path, "error": str(e)})
             return {
                 "success": False,
                 "file_path": file_path,
@@ -87,6 +135,8 @@ class WorkspaceTools:
             )
             stdout, stderr = await proc.communicate()
             
+            await self._publish_tool_event("apply_patch", "apply", {"exit_code": proc.returncode})
+            
             return {
                 "success": proc.returncode == 0,
                 "exit_code": proc.returncode,
@@ -95,6 +145,7 @@ class WorkspaceTools:
             }
         except Exception as e:
             logger.error(f"Failed to apply patch: {e}")
+            await self._publish_tool_event("apply_patch", "error", {"error": str(e)})
             return {
                 "success": False,
                 "error": str(e)
@@ -114,12 +165,15 @@ class WorkspaceTools:
             )
             stdout, stderr = await proc.communicate()
             
+            await self._publish_tool_event("git_status", "status", {"exit_code": proc.returncode})
+            
             return {
                 "success": True,
                 "status": stdout.decode()
             }
         except Exception as e:
             logger.error(f"Failed to get git status: {e}")
+            await self._publish_tool_event("git_status", "error", {"error": str(e)})
             return {
                 "success": False,
                 "error": str(e)
@@ -139,12 +193,15 @@ class WorkspaceTools:
             )
             stdout, stderr = await proc.communicate()
             
+            await self._publish_tool_event("git_diff", "diff", {"exit_code": proc.returncode})
+            
             return {
                 "success": True,
                 "diff": stdout.decode()
             }
         except Exception as e:
             logger.error(f"Failed to get git diff: {e}")
+            await self._publish_tool_event("git_diff", "error", {"error": str(e)})
             return {
                 "success": False,
                 "error": str(e)
@@ -169,6 +226,8 @@ class WorkspaceTools:
             )
             stdout, stderr = await proc.communicate()
             
+            await self._publish_tool_event("run_tests", "run", {"command": test_command, "exit_code": proc.returncode})
+            
             return {
                 "success": proc.returncode == 0,
                 "exit_code": proc.returncode,
@@ -177,6 +236,7 @@ class WorkspaceTools:
             }
         except Exception as e:
             logger.error(f"Failed to run tests: {e}")
+            await self._publish_tool_event("run_tests", "error", {"error": str(e)})
             return {
                 "success": False,
                 "error": str(e)

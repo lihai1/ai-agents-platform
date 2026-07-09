@@ -1,20 +1,32 @@
 # Agent Service
 
-Python FastAPI service for the agentic engineering platform. Handles chat interactions, agent workflows, and task execution.
+Python FastAPI service for the agentic engineering platform. Handles chat interactions, NATS messaging, and SSE streaming.
+
+## Architecture
+
+The agent-service is the **HTTP API and messaging layer** of the platform. It does **not** execute LangGraph workflows - that responsibility belongs to the agent-worker service.
+
+**Responsibilities:**
+- HTTP API for chat interactions
+- NATS message publishing (chat.start, run.start commands)
+- NATS event subscription (worker state events)
+- SSE streaming to the UI
+- PostgreSQL thread/message store
+- ChatKit protocol implementation
+
+**What it does NOT do:**
+- LangGraph workflow execution (handled by agent-worker)
+- Agent implementations (shared library in internal/agents/)
+- Workspace operations (handled by agent-worker in containers)
 
 ## Features
 
 - **ChatKit Integration**: Custom ChatKit server with SSE streaming
 - **AegisChatKitServer**: Async SSE streaming response for chat messages
 - **NATS Bridge**: Subscribes to `agent.events.{run_id}.>` and yields ChatKit events
-- **Mock Worker**: `mock_worker.py` for first-flow E2E testing without real LLMs
-- **LangGraph Workflows**: State machine-based agent execution
-- **Specialist Agents**: Skills-based agent system with structured outputs
-- **Workspace Isolation**: Docker-based isolated execution environments
-- **NATS Messaging**: Message-based communication with control plane
 - **Event Streaming**: Real-time agent activity events via SSE
-- **Human Approval**: LangGraph interrupts for sensitive operations
-- **Artifact Management**: Code diffs, test reports, and verification results
+- **NATS Messaging**: Message-based communication with control plane and agent-worker
+- **PostgreSQL Store**: Thread and message persistence
 
 ## Quick Start
 
@@ -80,15 +92,7 @@ uv run python mock_worker.py
 - `POST /chatkit/` - Chat endpoint with streaming
 - `GET /chatkit/threads/{thread_id}` - Get thread history
 
-### Agent Runs
-- `POST /agent/v1/runs` - Create a new agent run
-- `GET /agent/v1/runs/{run_id}` - Get run details
-- `GET /agent/v1/runs/{run_id}/events` - SSE event stream
-- `POST /agent/v1/runs/{run_id}/cancel` - Cancel a run
-
-### Approvals
-- `POST /agent/v1/runs/{run_id}/approvals/{approval_id}/approve` - Approve an action
-- `POST /agent/v1/runs/{run_id}/approvals/{approval_id}/reject` - Reject an action
+**Note:** Agent run endpoints (POST /agent/v1/runs, etc.) are now handled by the agent-worker service via NATS messaging. The agent-service only publishes NATS commands and streams events.
 
 ## NATS Integration
 
@@ -196,7 +200,6 @@ uv run pytest
 
 Run specific test suites:
 ```bash
-uv run pytest tests/e2e/
 uv run pytest tests/security/
 ```
 
@@ -212,20 +215,17 @@ Stop development environment:
 uv run dev-env-down
 ```
 
-Run integration tests:
+Run all tests:
 ```bash
-uv run test-integration
+uv run pytest
 ```
 
-Integration tests require PostgreSQL and NATS to be running locally. The tests verify:
-- NATS publishing to `chat.start`, `chat.close`, and `run.start` subjects
-- Event handling from NATS state events
-- Full chat lifecycle via HTTP + NATS messaging
+**Note:** E2E workflow tests have been removed from agent-service since workflow execution is now handled by agent-worker. Use agent-worker integration tests to test workflow execution.
 
 ## Implementation Status
 
 ✅ **Phase 2 Complete**: Angular UI + Python ChatKit
-✅ **Phase 3 Complete**: LangGraph Workflow Skeleton
+✅ **Phase 3 Complete**: LangGraph Workflow Skeleton (moved to agent-worker)
 ✅ **Phase 4 Complete**: Skills and Read-Only Agents
 ✅ **Phase 5 Complete**: Workspace Isolation
 ✅ **Phase 6 Complete**: Implementation Agents
@@ -235,6 +235,7 @@ Integration tests require PostgreSQL and NATS to be running locally. The tests v
 ✅ **Phase 10 Complete**: NATS Worker Separation
 ✅ **Phase 11 Complete**: Hardening and Evaluation
 ✅ **Phase 12 Complete**: Agent Container Creation Flow
+✅ **Phase 13 Complete**: Architecture Refactoring - Service Separation
 
 See [PROGRESS.md](../../PROGRESS.md) for full implementation details.
 

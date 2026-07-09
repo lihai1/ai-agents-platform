@@ -4,7 +4,7 @@ import logging
 import argparse
 import os
 import sys
-from internal.messaging.nats import NATSMessaging
+from internal.messaging.nats import NATSMessaging, set_nats_client
 from internal.workflow.graph import create_run
 from internal.workflow.checkpointer import get_checkpointer
 from internal.config import settings
@@ -37,6 +37,7 @@ class AgentWorker:
         # Connect to NATS
         self.nats = NATSMessaging(nats_url=self.nats_url)
         await self.nats.connect()
+        set_nats_client(self.nats)
         
         # Small delay to ensure connection is stable
         await asyncio.sleep(0.5)

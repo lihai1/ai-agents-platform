@@ -3,9 +3,9 @@ from typing import Dict, Any
 import uuid
 
 
-def chat_start_fixture(run_id: str = "test-run-123", repository_id: str = "test-repo-123", project_id: str = "test-project-123", mock_mode: bool = True) -> Dict[str, Any]:
+def chat_start_fixture(run_id: str = "test-run-123", repository_id: str = "test-repo-123", project_id: str = "test-project-123", mock_mode: bool = True, llm_provider: str = None) -> Dict[str, Any]:
     """Standard chat.start message fixture"""
-    return {
+    data = {
         "message_id": str(uuid.uuid4()),
         "run_id": run_id,
         "repository_id": repository_id,
@@ -14,6 +14,9 @@ def chat_start_fixture(run_id: str = "test-run-123", repository_id: str = "test-
         "timestamp": "2024-01-01T00:00:00Z",
         "schema_version": "1.0",
     }
+    if llm_provider:
+        data["llm_provider"] = llm_provider
+    return data
 
 
 def chat_close_fixture(run_id: str = "test-run-123") -> Dict[str, Any]:
@@ -26,7 +29,7 @@ def chat_close_fixture(run_id: str = "test-run-123") -> Dict[str, Any]:
     }
 
 
-def run_start_fixture(run_id: str = "test-run-123", user_id: str = "test-user-123", project_id: str = "test-project-123", repository_id: str = "test-repo-123", task: str = "Test task") -> Dict[str, Any]:
+def run_start_fixture(run_id: str = "test-run-123", user_id: str = "test-user-123", project_id: str = "test-project-123", repository_id: str = "test-repo-123", task: str = "Test task", llm_provider: str = "fake") -> Dict[str, Any]:
     """Standard run.start message fixture"""
     return {
         "message_id": str(uuid.uuid4()),
@@ -38,6 +41,7 @@ def run_start_fixture(run_id: str = "test-run-123", user_id: str = "test-user-12
             "repository_id": repository_id,
             "task": task,
             "run_id": run_id,
+            "llm_provider": llm_provider,
         },
         "timestamp": "2024-01-01T00:00:00Z",
         "schema_version": "1.0",

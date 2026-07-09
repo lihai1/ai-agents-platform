@@ -1,5 +1,5 @@
 from typing import List, Dict, Any, Optional
-from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain.agents import create_agent
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
@@ -25,7 +25,7 @@ class AgentFactory:
         repository_path: Optional[str] = None,
         repository_id: Optional[str] = None,
         context: Optional[Dict[str, Any]] = None
-    ) -> AgentExecutor:
+    ):
         """Create an agent with minimal context isolation"""
         
         skill = self.skill_registry.get_skill(skill_name)
@@ -35,11 +35,13 @@ class AgentFactory:
         # Get the model for this skill with Ollama as default provider
         provider = skill.definition.model_preferences.get("provider", "ollama")
         model_name = skill.definition.model_preferences.get("model", "qwen3.5:9b")
+        mock_mode = context.get("mock_mode", False) if context else False
         model = get_model(
             provider,
             model_name,
             temperature=skill.definition.temperature,
-            max_tokens=skill.definition.max_tokens
+            max_tokens=skill.definition.max_tokens,
+            mock_mode=mock_mode
         )
         
         # Create tools based on skill capabilities
@@ -58,17 +60,15 @@ class AgentFactory:
             MessagesPlaceholder(variable_name="agent_scratchpad"),
         ])
         
-        agent = create_tool_calling_agent(model, tools, prompt)
+        agent = create_agent(model, tools, system_prompt=prompt)
         
-        executor = AgentExecutor(
-            agent=agent,
-            tools=tools,
-            verbose=True,
-            handle_parsing_errors=True,
-            max_iterations=10,
-        )
-        
-        return executor
+        # Return agent and tools for invocation (LangChain 0.3+ pattern)
+        return {
+            "agent": agent,
+            "tools": tools,
+            "prompt": prompt,
+            "model": model
+        }
     
     def _create_tools_for_skill(
         self,

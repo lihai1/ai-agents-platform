@@ -1,4 +1,4 @@
-.PHONY: compose-up compose-down clean-start test-ui help
+.PHONY: compose-up compose-down clean-start test-ui help clean build-containers
 
 # Default target
 help:
@@ -12,7 +12,8 @@ help:
 # Terminate deployment, clean volumes
 clean:
 	@echo "Stopping deployment and Cleaning volumes..."
-	docker-compose down -v --remove-orphans
+	docker-compose down -v --remove-orphans || true
+	docker ps -q | xargs -r docker kill || true
 
 # Build containers manually and start services
 compose-up: build-containers
@@ -37,7 +38,8 @@ build-containers:
 	@echo "Building containers manually..."
 	docker build -t ai-platform-swe-16-gen-control-plane ./services/control-plane
 	docker build -t ai-platform-swe-16-gen-agent-service ./services/agent-service
-	docker build -t ai-platform-swe-16-gen-agent-worker ./services/agent-worker -f ./services/agent-worker/Dockerfile.worker
+	docker build -t ai-platform-swe-16-gen-agent-worker -t agentic-agent-worker:latest . -f ./services/agent-worker/Dockerfile.worker
+	docker build -t agentic-single-agent-worker:latest . -f ./services/agent-worker/Dockerfile.single-agent
 	docker build -t ai-platform-swe-16-gen-web ./apps/web
 	@echo "All containers built successfully"
 

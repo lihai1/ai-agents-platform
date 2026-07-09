@@ -20,11 +20,13 @@ class NATSMessaging:
         stream_name: str = "AGENT_COMMANDS",
         event_stream_name: str = "AGENT_EVENTS",
         orchestration_stream_name: str = "AGENT_ORCHESTRATION",
+        service_id: str = "agent-service",
     ):
         self.nats_url = nats_url
         self.stream_name = stream_name
         self.event_stream_name = event_stream_name
         self.orchestration_stream_name = orchestration_stream_name
+        self.service_id = service_id
         self.nc: Optional[NATSClient] = None
         self.js = None
         
@@ -182,17 +184,16 @@ class NATSMessaging:
         if not self.js:
             raise RuntimeError("NATS not connected")
         
-        consumer_name = f"{queue_group}-consumer"
-        
-        # Subscribe to run-specific subject if run_id provided
+        # Create unique durable consumer name with service_id and run_id
         if run_id:
             subject = f"agent.chat.{run_id}.>"
-            consumer_name = f"{queue_group}-{run_id}-consumer"
+            consumer_name = f"{self.service_id}-{queue_group}-{run_id}-consumer"
         else:
             subject = f"agent.chat.>"
+            consumer_name = f"{self.service_id}-{queue_group}-consumer"
         
         try:
-            # Create consumer
+            # Create subscription with JetStream
             await self.js.subscribe(
                 subject=subject,
                 cb=await self._create_command_handler(command_handler),
@@ -250,12 +251,16 @@ class NATSMessaging:
         if not self.js:
             raise RuntimeError("NATS not connected")
         
+        # Create unique durable consumer name with service_id and run_id
         if run_id:
             subject = f"agent.events.{run_id}.>"
+            consumer_name = f"{self.service_id}-events-{run_id}-consumer"
         else:
             subject = "agent.events.>"
+            consumer_name = f"{self.service_id}-events-consumer"
         
         try:
+            # Create subscription with JetStream
             await self.js.subscribe(
                 subject=subject,
                 cb=await self._create_event_handler(event_handler),
@@ -397,22 +402,29 @@ class NATSMessaging:
 
     async def subscribe_to_chat_events(
         self,
-        run_id: str,
+        run_id: Optional[str],
         event_handler: Callable[[Dict[str, Any]], None],
     ) -> None:
-        """Subscribe to all events for a specific run"""
+        """Subscribe to worker output events for a specific run or all runs"""
         if not self.js:
             raise RuntimeError("NATS not connected")
         
-        subject = f"agent.chat.{run_id}.>"
+        # Create unique durable consumer name with service_id and run_id
+        if run_id:
+            subject = f"agent.chat.{run_id}.events"
+            consumer_name = f"{self.service_id}-chat-{run_id}-consumer"
+        else:
+            subject = "agent.chat.>"
+            consumer_name = f"{self.service_id}-chat-consumer"
         
         try:
+            # Create subscription with JetStream
             await self.js.subscribe(
                 subject=subject,
                 cb=await self._create_event_handler(event_handler),
                 manual_ack=True,
             )
-            logger.info(f"Subscribed to chat events for run {run_id}")
+            logger.info(f"Subscribed to chat events for run {run_id} on {subject}")
         except Exception as e:
             logger.error(f"Failed to subscribe to chat events: {e}")
             raise

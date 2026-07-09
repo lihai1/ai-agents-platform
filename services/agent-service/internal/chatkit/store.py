@@ -17,8 +17,8 @@ class PostgreSQLStore:
             run = AgentRun(
                 id=thread_id,
                 user_id=metadata.get("user_subject", "user:local-dev"),
-                project_id=metadata.get("project_id", ""),
-                repository_id=metadata.get("repository_id", ""),
+                project_id=metadata.get("project_id") or "",
+                repository_id=metadata.get("repository_id") or "",
                 task=metadata.get("task", ""),
                 status="CREATED",
             )

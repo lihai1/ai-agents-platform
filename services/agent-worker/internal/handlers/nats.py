@@ -38,11 +38,12 @@ async def handle_run_start(run_id: str, payload: dict, create_run_func, get_chec
         # Get checkpointer
         checkpointer = await get_checkpointer_func()
         
-        # Check for mock mode
+        # Check for mock mode (from payload or environment)
         import os
-        mock_mode = os.getenv("MOCK_MODE", "false").lower() == "true"
-        logger.info(f"[WORKER] Mock mode: {mock_mode}")
-        
+        mock_mode = payload.get("mock_mode", os.getenv("MOCK_MODE", "false").lower() == "true")
+        llm_provider = payload.get("llm_provider") or os.getenv("LLM_PROVIDER")
+        logger.info(f"[WORKER] Mock mode: {mock_mode}, LLM provider: {llm_provider}")
+
         # Execute the workflow
         result = await create_run_func({
             "run_id": run_id,
@@ -55,6 +56,7 @@ async def handle_run_start(run_id: str, payload: dict, create_run_func, get_chec
             "max_cost": payload.get("max_cost"),
             "max_repair_count": payload.get("max_repair_count", 2),
             "mock_mode": mock_mode,
+            "llm_provider": llm_provider,
         }, checkpointer)
         
         logger.info(f"[WORKER] Run for run {run_id} completed with status {result.get('status')}")
@@ -80,7 +82,7 @@ async def handle_run_resume(run_id: str, payload: dict) -> None:
 
 
 async def publish_final_answer(run_id: str, content: str, nats_client) -> None:
-    """Publish final answer to agent.chat.{run_id}.user.events"""
+    """Publish final answer to agent.chat.{run_id}.events"""
     if not nats_client or not nats_client.js:
         logger.warning(f"[WORKER] NATS not connected, cannot publish final answer for run {run_id}")
         return
@@ -96,7 +98,7 @@ async def publish_final_answer(run_id: str, content: str, nats_client) -> None:
         "schema_version": "1.0",
     }
     
-    subject = f"agent.chat.{run_id}.user.events"
+    subject = f"agent.chat.{run_id}.events"
     try:
         await nats_client.js.publish(
             subject=subject,
@@ -112,7 +114,7 @@ async def publish_final_answer(run_id: str, content: str, nats_client) -> None:
 
 
 async def publish_progress_update(run_id: str, content: str, nats_client) -> None:
-    """Publish progress update to agent.chat.{run_id}.user.events"""
+    """Publish progress update to agent.chat.{run_id}.events"""
     if not nats_client or not nats_client.js:
         logger.warning(f"[WORKER] NATS not connected, cannot publish progress update for run {run_id}")
         return
@@ -128,7 +130,7 @@ async def publish_progress_update(run_id: str, content: str, nats_client) -> Non
         "schema_version": "1.0",
     }
     
-    subject = f"agent.chat.{run_id}.user.events"
+    subject = f"agent.chat.{run_id}.events"
     try:
         await nats_client.js.publish(
             subject=subject,

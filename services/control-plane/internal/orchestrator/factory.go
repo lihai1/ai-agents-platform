@@ -22,6 +22,7 @@ type ContainerConfig struct {
 	Image         string
 	EnvVars       map[string]string
 	ContainerName string
+	Network       string
 }
 
 // RepositoryCredentials holds credentials for repository access

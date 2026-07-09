@@ -1,5 +1,6 @@
 import uuid
 import json
+import asyncio
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from typing import Any
@@ -80,8 +81,22 @@ class AegisChatKitServer(ChatKitServer[RequestContext]):
 
         print("CHATKIT created run", run_id)
 
-        # Important: Subscribe before publishing agent.start
-        events = self.nats.subscribe_run_events(run_id)
+        # Persist user message to store
+        try:
+            await self.store.add_message(
+                thread_id=thread.id,
+                role="user",
+                content=prompt
+            )
+            print(f"Persisted user message for thread {thread.id}")
+        except Exception as e:
+            print(f"Failed to persist user message: {e}")
+
+        # Use global event stream instead of NATS bridge
+        # The global subscription in main.py already receives all events
+        from internal.event_streams import get_event_stream
+        event_stream = await get_event_stream(run_id)
+        print(f"ChatKit server: Using global event stream for run_id: {run_id}, queue size: {event_stream.qsize()}")
 
         await self.nats.publish_agent_start(
             run_id=run_id,
@@ -92,6 +107,10 @@ class AegisChatKitServer(ChatKitServer[RequestContext]):
                 "org_id": context.org_id,
                 "request_id": context.request_id,
                 "source": "chatkit",
+                "project_id": context.project_id,
+                "repository_id": context.repository_id,
+                "mock_mode": context.mock_mode,
+                "llm_provider": context.llm_provider,
             },
         )
 
@@ -103,8 +122,10 @@ class AegisChatKitServer(ChatKitServer[RequestContext]):
         )
         yield self._event_to_sse(progress_event)
 
-        async for event in events:
-            print("NATS event received", event)
+        while True:
+            print(f"ChatKit server: Waiting for event from stream, queue size: {event_stream.qsize()}")
+            event = await event_stream.get()
+            print(f"ChatKit server: Received event from global stream: {event.get('event_type')}, full event: {event}")
 
             if is_completed_event(event):
                 final_text = final_answer_from_event(event)
@@ -115,26 +136,64 @@ class AegisChatKitServer(ChatKitServer[RequestContext]):
                     text=final_text,
                 )
                 yield self._event_to_sse(event)
+                
+                # Persist assistant message to store
+                try:
+                    await self.store.add_message(
+                        thread_id=thread.id,
+                        role="assistant",
+                        content=final_text
+                    )
+                    print(f"Persisted assistant message for thread {thread.id}")
+                except Exception as e:
+                    print(f"Failed to persist assistant message: {e}")
+                
                 break
 
             if is_failed_event(event):
                 print("YIELDING failed assistant message")
+                error_text = f"Agent failed: {event.get('message', 'unknown error')}"
                 event = self._assistant_message(
                     thread=thread,
                     context=context,
-                    text=f"Agent failed: {event.get('message', 'unknown error')}",
+                    text=error_text,
                 )
                 yield self._event_to_sse(event)
+                
+                # Persist assistant message to store
+                try:
+                    await self.store.add_message(
+                        thread_id=thread.id,
+                        role="assistant",
+                        content=error_text
+                    )
+                    print(f"Persisted failed assistant message for thread {thread.id}")
+                except Exception as e:
+                    print(f"Failed to persist assistant message: {e}")
+                
                 break
 
             if is_cancelled_event(event):
                 print("YIELDING cancelled assistant message")
+                cancelled_text = "Agent run was cancelled."
                 event = self._assistant_message(
                     thread=thread,
                     context=context,
-                    text="Agent run was cancelled.",
+                    text=cancelled_text,
                 )
                 yield self._event_to_sse(event)
+                
+                # Persist assistant message to store
+                try:
+                    await self.store.add_message(
+                        thread_id=thread.id,
+                        role="assistant",
+                        content=cancelled_text
+                    )
+                    print(f"Persisted cancelled assistant message for thread {thread.id}")
+                except Exception as e:
+                    print(f"Failed to persist assistant message: {e}")
+                
                 break
 
             print("YIELDING progress update")

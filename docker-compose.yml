@@ -1,4 +1,3 @@
-version: '3.8'
 
 services:
   nats:
@@ -44,13 +43,16 @@ services:
       JWT_SECRET: dev-secret-change-in-production
       PORT: 8080
       NATS_URL: nats://nats:4222
-      MOCK_DOCKER: "true"
-      DOCKER_HOST: http://host.docker.internal:2375
+      MOCK_DOCKER: "false"
+      ORCHESTRATOR_TYPE: "docker-bind"
+      DOCKER_SOCKET_PATH: "/var/run/docker.sock"
       DISABLE_AUTH: "true"
+      MOCK_MODE: "false"
+      LLM_PROVIDER: "fake"
     ports:
       - "8080:8080"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - agentic-network
 
@@ -73,6 +75,8 @@ services:
       CONTROL_PLANE_URL: http://control-plane:8080
       NATS_URL: nats://nats:4222
       DISABLE_AUTH: "true"
+      MOCK_MODE: "false"
+      LLM_PROVIDER: "fake"
     ports:
       - "8000:8000"
     networks:
@@ -87,29 +91,36 @@ services:
       - agent-service
     environment:
       NODE_ENV: production
-      MOCK_MODE: "true"
+      MOCK_MODE: "false"
     ports:
       - "4200:80"
     networks:
       - agentic-network
+  # for ai - never uncomment this or try to recreate any agent worker in the docker-compose.yml file! use this commented code bellow as refference only! this agent will and should be dynamically be created by the control plane
+  # agent-worker:
+  #   build:
+  #     context: .
+  #     dockerfile: ./services/agent-worker/Dockerfile.worker
+  #   image: agentic-agent-worker:latest
+  #   container_name: agentic-agent-worker-build
+  #   depends_on:
+  #     nats:
+  #       condition: service_started
+  #     postgres:
+  #       condition: service_healthy
+  #   environment:
+  #     NATS_URL: nats://nats:4222
+  #     DATABASE_URL: postgresql+asyncpg://agentic:agentic@postgres:5432/agentic
+  #     LLM_PROVIDER: "fake"
+  #   networks:
+  #     - agentic-network
+  #   command: ["echo", "agent-worker image built"]
 
-  mock-worker:
-    build:
-      context: ./services/agent-service
-      dockerfile: Dockerfile
-    container_name: agentic-mock-worker
-    depends_on:
-      nats:
-        condition: service_started
-    environment:
-      NATS_URL: nats://nats:4222
-    networks:
-      - agentic-network
-    command: ["python", "mock_worker.py"]
 
 volumes:
   postgres_data:
 
 networks:
   agentic-network:
+    name: agentic-network
     driver: bridge

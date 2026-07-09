@@ -31,6 +31,15 @@ interface ChatMessage {
             <input type="checkbox" [(ngModel)]="mockMode" />
             <span>Mock Mode</span>
           </label>
+          <label class="workflow-toggle">
+            <span>LLM Provider</span>
+            <select [(ngModel)]="llmProvider">
+              <option value="fake">Fake</option>
+              <option value="ollama">Ollama</option>
+              <option value="openai">OpenAI</option>
+              <option value="anthropic">Anthropic</option>
+            </select>
+          </label>
           <button class="btn btn-secondary" (click)="toggleActivityPanel()" [class.active]="showActivityPanel">
             Activity
           </button>
@@ -274,6 +283,7 @@ export class ChatComponent implements OnInit, OnDestroy {
   repositoryId: string | null = null;
   triggerWorkflow = false;
   mockMode = false;
+  llmProvider = 'fake';
   
   showActivityPanel = false;
   currentRunId: string | null = null;
@@ -304,6 +314,11 @@ export class ChatComponent implements OnInit, OnDestroy {
   }
 
   ngOnInit(): void {
+    // Load threadId from localStorage if available
+    const savedThreadId = localStorage.getItem('chat_thread_id');
+    if (savedThreadId) {
+      this.threadId = savedThreadId;
+    }
     this.loadThread();
   }
   
@@ -334,6 +349,15 @@ export class ChatComponent implements OnInit, OnDestroy {
     // Add user message immediately
     this.messages.push({ role: 'user', content: message });
     
+    // Safety timeout to ensure button gets re-enabled
+    const safetyTimeout = setTimeout(() => {
+      if (this.isSending) {
+        console.warn('Message sending timeout - re-enabling button');
+        this.isSending = false;
+        this.cdr.detectChanges();
+      }
+    }, 30000); // 30 second timeout
+    
     try {
       const token = localStorage.getItem('jwt_token');
       const response = await fetch('/chatkit/', {
@@ -345,12 +369,11 @@ export class ChatComponent implements OnInit, OnDestroy {
         body: JSON.stringify({
           message: message,
           thread_id: this.threadId,
-          model_provider: 'ollama',
-          model_name: 'llama3.2',
           trigger_workflow: this.triggerWorkflow,
           project_id: this.projectId,
           repository_id: this.repositoryId,
-          mock_mode: this.mockMode
+          mock_mode: this.mockMode,
+          llm_provider: this.llmProvider
         })
       });
       
@@ -400,6 +423,9 @@ export class ChatComponent implements OnInit, OnDestroy {
                   assistantMessage = text;
                   if (data.item.thread_id) {
                     this.threadId = data.item.thread_id;
+                    if (this.threadId) {
+                      localStorage.setItem('chat_thread_id', this.threadId);
+                    }
                   }
                   
                   this.ngZone.run(() => {
@@ -416,6 +442,9 @@ export class ChatComponent implements OnInit, OnDestroy {
                 assistantMessage += data.content;
                 if (data.thread_id) {
                   this.threadId = data.thread_id;
+                  if (this.threadId) {
+                    localStorage.setItem('chat_thread_id', this.threadId);
+                  }
                 }
                 if (data.workflow_triggered) {
                   workflowTriggered = true;
@@ -450,7 +479,9 @@ export class ChatComponent implements OnInit, OnDestroy {
         content: 'Sorry, something went wrong. Please try again.' 
       });
     } finally {
+      clearTimeout(safetyTimeout);
       this.isSending = false;
+      this.cdr.detectChanges();
     }
   }
   

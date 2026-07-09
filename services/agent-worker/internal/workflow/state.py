@@ -5,8 +5,8 @@ import uuid
 class EngineeringState(TypedDict):
     """State for the engineering workflow"""
     
-    # Chat identification
-    chat_id: str
+    # Run identification
+    run_id: str
     user_id: str
     project_id: str
     repository_id: str
@@ -66,3 +66,7 @@ class EngineeringState(TypedDict):
     # Approval tracking
     pending_approvals: List[Dict[str, Any]]
     approval_decisions: Dict[str, str]
+
+    # LLM configuration
+    llm_provider: Optional[str]
+    mock_mode: bool

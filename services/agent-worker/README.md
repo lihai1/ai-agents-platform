@@ -4,12 +4,29 @@ Python worker process for isolated agent workflow execution. Runs in Docker-in-D
 
 ## Purpose
 
-The agent worker is responsible for:
+The agent worker is the **workflow execution layer** of the platform. It is responsible for:
 - Executing LangGraph workflows in isolated containers
+- Running real specialist agents with LLM integration
 - Cloning git repositories to `/workspace`
 - Subscribing to NATS commands (run.start)
 - Publishing state events back to NATS
-- Running specialist agents with workspace access
+- Workspace file operations and git commands
+
+## Architecture
+
+The agent-worker contains the **complete LangGraph workflow implementation** with real agent executions. The agent-service (HTTP API layer) does NOT execute workflows - it only publishes NATS commands and streams events.
+
+**Responsibilities:**
+- LangGraph workflow execution (all 15 states)
+- Real specialist agent implementations (skills-lead, repo-scout, solution-planner, implementers, validators)
+- Workspace operations (read/write files, git commands, test execution)
+- NATS command subscription (agent.chat.{run_id}.user.events)
+- NATS event publishing (agent.events.{run_id}.{event_type}, agent.chat.{run_id}.events)
+
+**What it does NOT do:**
+- HTTP API endpoints (handled by agent-service)
+- PostgreSQL thread/message store (handled by agent-service)
+- ChatKit protocol implementation (handled by agent-service)
 
 ## Quick Start
 

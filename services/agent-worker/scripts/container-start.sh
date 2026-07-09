@@ -4,20 +4,21 @@ set -e
 echo "Starting agent orchestrator container..."
 
 # Get environment variables
-CHAT_ID="${CHAT_ID}"
-REPOSITORY_URL="${REPOSITORY_URL}"
+RUN_ID="${RUN_ID}"
+REPOSITORY_URL="${REPOSITORY_URL:-/app/fixtures/go-rest-feature}"
 BRANCH="${BRANCH:-main}"
 GIT_USERNAME="${GIT_USERNAME:-}"
 GIT_TOKEN="${GIT_TOKEN:-}"
-NATS_URL="${NATS_URL:-nats://localhost:4222}"
+NATS_URL="${NATS_URL:-nats://nats:4222}"
 MOCK_MODE="${MOCK_MODE:-false}"
+LLM_PROVIDER="${LLM_PROVIDER:-fake}"
 
-if [ -z "$CHAT_ID" ]; then
-    echo "Error: CHAT_ID environment variable is required"
+if [ -z "$RUN_ID" ]; then
+    echo "Error: RUN_ID environment variable is required"
     exit 1
 fi
 
-echo "Chat ID: $CHAT_ID"
+echo "Run ID: $RUN_ID"
 echo "Repository URL: $REPOSITORY_URL"
 echo "Branch: $BRANCH"
 echo "NATS URL: $NATS_URL"
@@ -84,10 +85,11 @@ else
 fi
 
 # Start the worker process
-echo "Starting worker for chat $CHAT_ID..."
-export CHAT_ID="$CHAT_ID"
+echo "Starting worker for run $RUN_ID..."
+export RUN_ID="$RUN_ID"
 export NATS_URL="$NATS_URL"
 export MOCK_MODE="$MOCK_MODE"
+export LLM_PROVIDER="$LLM_PROVIDER"
 
 # Run the worker
-python -m app.worker --chat-id "$CHAT_ID"
+python -m app.worker --run-id "$RUN_ID"

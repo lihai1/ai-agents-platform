@@ -1,26 +1,42 @@
 """NATS message handlers for agent service"""
 import logging
-import os
 
 logger = logging.getLogger(__name__)
 
-# Global OpenAI ChatKit client
+# Global ChatKit client for local agent-service
 chatkit_client = None
 
-try:
-    from openai import OpenAI
-    chatkit_client_type = OpenAI
-except ImportError:
-    chatkit_client_type = None
-    logger.warning("OpenAI module not available, ChatKit functionality will be disabled")
+
+class LocalChatKitClient:
+    """Local ChatKit client for agent-service (custom ChatKit server)"""
+    class Messages:
+        def __init__(self, store):
+            self.store = store
+        
+        async def create(self, thread_id: str, content: str, role: str):
+            """Create message in local PostgreSQL store"""
+            try:
+                await self.store.add_message(thread_id, role, content)
+                logger.info(f"Local ChatKit: Created message in PostgreSQL store for thread {thread_id}")
+            except Exception as e:
+                logger.error(f"Local ChatKit: Failed to create message: {e}")
+    
+    def __init__(self, store):
+        self.store = store
+        self.chatkit = type('ChatKit', (), {'messages': self.Messages(store)})()
 
 
 def get_chatkit_client():
-    """Get or create ChatKit client"""
+    """Get or create local ChatKit client"""
     global chatkit_client
-    if chatkit_client is None and chatkit_client_type is not None:
-        openai_api_key = os.getenv("OPENAI_API_KEY", "")
-        chatkit_client = chatkit_client_type(api_key=openai_api_key)
+    if chatkit_client is None:
+        # agent-service acts as custom ChatKit server, always use local PostgreSQL store
+        from internal.chatkit.store import PostgreSQLStore
+        from internal.db import AsyncSessionLocal
+        store = PostgreSQLStore(AsyncSessionLocal)
+        chatkit_client = LocalChatKitClient(store)
+        logger.info("Using local ChatKit client (agent-service as custom ChatKit server)")
+    
     return chatkit_client
 
 
@@ -65,13 +81,15 @@ async def handle_agent_state_event(event: dict, push_event_func) -> None:
             message_content = message_map.get(event_type, f"Agent event: {event_type}")
             
             # Create ChatKit message via library (messaging infrastructure only)
-            client.chatkit.messages.create(
-                thread_id=run_id,
-                content=message_content,
-                role="assistant"
-            )
-            
-            logger.info(f"Created ChatKit message for run {run_id}: {message_content}")
+            if client:
+                client.chatkit.messages.create(
+                    thread_id=run_id,
+                    content=message_content,
+                    role="assistant"
+                )
+                logger.info(f"Created ChatKit message for run {run_id}: {message_content}")
+            else:
+                logger.warning(f"ChatKit client not available, skipping message creation for run {run_id}")
             
         except Exception as e:
             logger.error(f"Failed to create ChatKit message: {e}")
@@ -105,13 +123,15 @@ async def handle_worker_user_event(event: dict, push_event_func) -> None:
             message_content = payload.get("content", "")
             
             # Create ChatKit message via library (messaging infrastructure only)
-            client.chatkit.messages.create(
-                thread_id=run_id,
-                content=message_content,
-                role="assistant"
-            )
-            
-            logger.info(f"Created ChatKit message for run {run_id} from worker: {message_content}")
+            if client:
+                client.chatkit.messages.create(
+                    thread_id=run_id,
+                    content=message_content,
+                    role="assistant"
+                )
+                logger.info(f"Created ChatKit message for run {run_id} from worker: {message_content}")
+            else:
+                logger.warning(f"ChatKit client not available, skipping message creation for run {run_id}")
             
         except Exception as e:
             logger.error(f"Failed to create ChatKit message from worker: {e}")

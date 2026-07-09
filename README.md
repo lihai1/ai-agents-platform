@@ -66,6 +66,14 @@ uv run alembic upgrade head
 uv run uvicorn app.main:app --reload
 ```
 
+#### Agent Worker (Python)
+
+```bash
+cd services/agent-worker
+uv sync
+uv run python -m app.worker --run-id <run_id> --nats-url nats://localhost:4222
+```
+
 #### Web UI (Angular)
 
 ```bash
@@ -133,12 +141,11 @@ ai-platform-swe-1.6-gen/
 │   │   ├── Makefile
 │   │   ├── go.mod
 │   │   └── Dockerfile
-│   └── agent-service/       # Python 3.12+ agent service
+│   └── agent-service/       # Python 3.12+ agent service (HTTP API + messaging layer)
 │       ├── app/
-│       │   ├── main.py            # FastAPI application
-│       │   └── worker.py          # Agent worker process
+│       │   └── main.py            # FastAPI application
 │       ├── internal/
-│       │   ├── agents/            # Specialist agents
+│       │   ├── agents/            # Shared specialist agents library
 │       │   │   ├── factory.py     # Agent creation
 │       │   │   ├── schemas.py     # Pydantic schemas
 │       │   │   ├── specialists.py # Planning agents
@@ -153,26 +160,17 @@ ai-platform-swe-1.6-gen/
 │       │   │   └── store.py       # PostgreSQL thread/message store
 │       │   ├── config.py          # Configuration
 │       │   ├── db.py              # Database connection
+│       │   ├── event_streams.py   # SSE event streaming infrastructure
+│       │   ├── handlers/         # NATS message handlers
 │       │   ├── messaging/         # NATS messaging
 │       │   │   └── nats.py        # NATS client
 │       │   ├── models.py          # SQLAlchemy models
 │       │   ├── skills/            # Skill system
 │       │   │   ├── registry.py    # Skill loader
 │       │   │   └── snapshots.py   # Skill versioning
-│       │   ├── tools/             # Agent tools
-│       │   │   ├── repository.py  # Read-only repo tools
-│       │   │   └── workspace.py   # Workspace tools
-│       │   ├── workflow/          # LangGraph workflow
-│       │   │   ├── graph.py       # State graph
-│       │   │   ├── nodes.py       # Workflow nodes
-│       │   │   ├── state.py       # State definitions
-│       │   │   ├── events.py      # Event handling
-│       │   │   ├── checkpointer.py # Checkpointer setup
-│       │   │   ├── approvals.py   # Human approval
-│       │   │   ├── tracing.py     # LangSmith tracing
-│       │   │   └── router.py      # Workflow API
-│       │   └── workspace/         # Workspace management
-│       │       └── manager.py     # Docker workspace manager
+│       │   └── tools/             # Agent tools
+│       │       ├── repository.py  # Read-only repo tools
+│       │       └── workspace.py   # Workspace tools
 │       ├── migrations/            # Alembic migrations
 │       ├── tests/                 # Test suites
 │       │   ├── e2e/              # End-to-end tests
@@ -217,6 +215,7 @@ ai-platform-swe-1.6-gen/
 10. ✅ Phase 10: NATS Worker Separation
 11. ✅ Phase 11: Hardening and Evaluation
 12. ✅ Phase 12: Agent Container Creation Flow
+
 
 See [PROGRESS.md](PROGRESS.md) for detailed implementation status.
 

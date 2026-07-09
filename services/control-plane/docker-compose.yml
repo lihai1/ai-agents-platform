@@ -34,11 +34,13 @@ services:
     ports:
       - "4222:4222"
       - "8222:8222"
+    command: "-js"
 
   backend:
     build:
       context: .
       dockerfile: Dockerfile
+    image: ai-platform-swe-16-gen-control-plane:latest
     container_name: agentic-backend
     depends_on:
       postgres:

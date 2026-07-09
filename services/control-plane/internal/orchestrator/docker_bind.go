@@ -2,19 +2,23 @@ package orchestrator
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 )
 
 // DockerBindOrchestrator implements ContainerOrchestrator using Docker HTTP API with socket support
 type DockerBindOrchestrator struct {
-	httpClient   *http.Client
-	mockMode     bool
-	dockerSocket string
+	httpClient *http.Client
+	mockMode   bool
+	baseURL    string
+	socketPath string
 }
 
 // NewDockerBindOrchestrator creates a new Docker bind orchestrator
@@ -32,13 +36,24 @@ func NewDockerBindOrchestrator(dockerSocketPath string) (*DockerBindOrchestrator
 		}
 	}
 
-	// For Docker bind, we use the Unix socket
-	dockerHost := fmt.Sprintf("unix://%s", dockerSocketPath)
+	socketPath := strings.TrimPrefix(dockerSocketPath, "unix://")
+
+	// HTTP client that dials the Unix socket for all requests
+	unixTransport := &http.Transport{
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			d := net.Dialer{Timeout: 30 * time.Second}
+			return d.DialContext(ctx, "unix", socketPath)
+		},
+	}
 
 	return &DockerBindOrchestrator{
-		httpClient:   &http.Client{Timeout: 30 * time.Second},
-		mockMode:     false,
-		dockerSocket: dockerHost,
+		httpClient: &http.Client{
+			Transport: unixTransport,
+			Timeout:   30 * time.Second,
+		},
+		mockMode:   false,
+		baseURL:    "http://localhost",
+		socketPath: socketPath,
 	}, nil
 }
 
@@ -68,13 +83,25 @@ func (d *DockerBindOrchestrator) CreateContainer(config ContainerConfig) (*Conta
 	}
 
 	// Create container via Docker API
+	networkMode := config.Network
+	if networkMode == "" {
+		networkMode = "bridge"
+	}
 	createReq := map[string]interface{}{
 		"Image": config.Image,
 		"Env":   env,
 		"Cmd":   []string{"/app/container-start.sh"},
 		"HostConfig": map[string]interface{}{
-			"NetworkMode": "bridge",
+			"NetworkMode": networkMode,
 		},
+	}
+
+	if config.Network != "" {
+		createReq["NetworkingConfig"] = map[string]interface{}{
+			"EndpointsConfig": map[string]interface{}{
+				config.Network: map[string]interface{}{},
+			},
+		}
 	}
 
 	body, err := json.Marshal(createReq)
@@ -84,10 +111,7 @@ func (d *DockerBindOrchestrator) CreateContainer(config ContainerConfig) (*Conta
 
 	// Note: In production with actual Docker socket, this would use the Unix socket
 	// For now, we'll use the HTTP API approach which works with socket mounting
-	dockerHost := os.Getenv("DOCKER_HOST")
-	if dockerHost == "" {
-		dockerHost = "http://localhost:2375"
-	}
+	dockerHost := d.baseURL
 
 	resp, err := d.httpClient.Post(
 		fmt.Sprintf("%s/containers/create?name=%s", dockerHost, config.RunID),
@@ -139,10 +163,7 @@ func (d *DockerBindOrchestrator) StopContainer(containerID string) error {
 		return nil
 	}
 
-	dockerHost := os.Getenv("DOCKER_HOST")
-	if dockerHost == "" {
-		dockerHost = "http://localhost:2375"
-	}
+	dockerHost := d.baseURL
 
 	resp, err := d.httpClient.Post(
 		fmt.Sprintf("%s/containers/%s/stop?t=30", dockerHost, containerID),
@@ -168,10 +189,7 @@ func (d *DockerBindOrchestrator) RemoveContainer(containerID string) error {
 		return nil
 	}
 
-	dockerHost := os.Getenv("DOCKER_HOST")
-	if dockerHost == "" {
-		dockerHost = "http://localhost:2375"
-	}
+	dockerHost := d.baseURL
 
 	req, _ := http.NewRequest("DELETE", fmt.Sprintf("%s/containers/%s?force=true", dockerHost, containerID), nil)
 	resp, err := d.httpClient.Do(req)
@@ -198,10 +216,7 @@ func (d *DockerBindOrchestrator) GetContainerStatus(containerID string) (*Contai
 		}, nil
 	}
 
-	dockerHost := os.Getenv("DOCKER_HOST")
-	if dockerHost == "" {
-		dockerHost = "http://localhost:2375"
-	}
+	dockerHost := d.baseURL
 
 	resp, err := d.httpClient.Get(fmt.Sprintf("%s/containers/%s/json", dockerHost, containerID))
 	if err != nil {
@@ -237,10 +252,7 @@ func (d *DockerBindOrchestrator) ExecInContainer(containerID string, command []s
 		return nil
 	}
 
-	dockerHost := os.Getenv("DOCKER_HOST")
-	if dockerHost == "" {
-		dockerHost = "http://localhost:2375"
-	}
+	dockerHost := d.baseURL
 
 	execReq := map[string]interface{}{
 		"AttachStdout": true,

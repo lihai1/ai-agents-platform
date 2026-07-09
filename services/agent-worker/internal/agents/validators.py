@@ -1,7 +1,7 @@
 """Validation agents for testing, review, and verification"""
 from typing import Dict, Any, List, Optional
 from langchain_core.prompts import ChatPromptTemplate
-from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain.agents import create_agent
 from langchain_core.tools import tool
 from internal.agents.schemas import TestResult, ReviewResult, ReviewFinding, VerificationResult, CriterionResult
 from internal.agents.model_factory import get_model
@@ -13,11 +13,123 @@ import re
 logger = logging.getLogger(__name__)
 
 
+def _parse_test_output(test_output: str) -> dict:
+    """Parse test output from go test or simple summaries."""
+    total = passed = failed = skipped = 0
+    try:
+        # Look for explicit counts first (e.g. "1 passed, 0 failed")
+        passed_match = re.search(r"(\d+)\s+passed", test_output, re.IGNORECASE)
+        failed_match = re.search(r"(\d+)\s+failed", test_output, re.IGNORECASE)
+        skipped_match = re.search(r"(\d+)\s+skipped", test_output, re.IGNORECASE)
+        if passed_match or failed_match:
+            passed = int(passed_match.group(1)) if passed_match else 0
+            failed = int(failed_match.group(1)) if failed_match else 0
+            skipped = int(skipped_match.group(1)) if skipped_match else 0
+        else:
+            # Fallback for go test output: "ok" or "PASS" means all passed,
+            # "FAIL" or "--- FAIL" means at least one failed.
+            if re.search(r"FAIL|---\s*FAIL", test_output, re.IGNORECASE):
+                failed = 1
+            elif re.search(r"ok\s|PASS", test_output, re.IGNORECASE):
+                passed = 1
+        total = passed + failed + skipped
+    except Exception as e:
+        logger.warning(f"Failed to parse test output: {e}")
+    return {
+        "total_tests": total or 1,
+        "passed": passed,
+        "failed": failed,
+        "skipped": skipped,
+    }
+
+
+def _parse_test_result(result: dict) -> TestResult:
+    """Parse an AgentExecutor result into a TestResult"""
+    output_text = result.get("output", "")
+    test_output = ""
+    success = False
+    intermediate_steps = result.get("intermediate_steps", [])
+    for action, observation in intermediate_steps:
+        try:
+            tool_name = getattr(action, "tool", None)
+            if tool_name == "run_tests":
+                obs = json.loads(observation) if isinstance(observation, str) else observation
+                if obs.get("success"):
+                    success = True
+                    test_output = obs.get("output", "")
+                else:
+                    test_output = obs.get("error", "") or obs.get("output", "")
+        except Exception as e:
+            logger.warning(f"Failed to parse test step: {e}")
+
+    if not test_output and output_text:
+        test_output = output_text
+
+    metrics = _parse_test_output(test_output)
+    return TestResult(
+        total_tests=metrics["total_tests"],
+        passed=metrics["passed"],
+        failed=metrics["failed"],
+        skipped=metrics["skipped"],
+        coverage=0.0,
+        test_output=test_output,
+        failed_tests=[]
+    )
+
+
+def _parse_review_result(result: dict) -> ReviewResult:
+    """Parse an AgentExecutor result into a ReviewResult"""
+    output = result.get("output", "")
+    decision = "approved" if "approved" in output.lower() else "changes_required"
+    return ReviewResult(
+        decision=decision,
+        findings=[],
+        summary=output or "Code review completed"
+    )
+
+
+def _parse_verification_result(
+    result: dict,
+    implementation_plan: Dict[str, Any],
+    test_results: Any,
+    review_results: Any,
+) -> VerificationResult:
+    """Parse an AgentExecutor result into a VerificationResult"""
+    output = result.get("output", "")
+    criteria = implementation_plan.get("acceptance_criteria", []) if implementation_plan else []
+    test_passed = bool(test_results and getattr(test_results, "passed", test_results.get("passed", 0)) > 0)
+    review_decision = review_results.decision if hasattr(review_results, "decision") else review_results.get("decision", "approved")
+    accepted = test_passed and review_decision != "rejected"
+
+    criteria_results = [
+        CriterionResult(
+            criterion=c,
+            passed=accepted,
+            evidence=output or "Verified through testing and code review"
+        )
+        for c in criteria
+    ] if criteria else [
+        CriterionResult(
+            criterion="Implementation",
+            passed=accepted,
+            evidence=output or "Verified through testing and code review"
+        )
+    ]
+
+    return VerificationResult(
+        accepted=accepted,
+        criteria_results=criteria_results,
+        summary=output or "Verification completed"
+    )
+
+
 class BackendTestEngineerAgent:
     """Agent for backend testing (Go, Python, etc.)"""
-    
-    def __init__(self, model_name: str = "gpt-4"):
-        self.model = get_model(model_name)
+
+    def __init__(self, model_name: str = "gpt-4", mock_mode: bool = False, llm_provider: str = None):
+        self.model = get_model(model_name=model_name, mock_mode=mock_mode, llm_provider=llm_provider)
+        self.mock_mode = mock_mode
+        self.llm_provider = llm_provider
     
     async def run_tests(
         self,
@@ -25,8 +137,13 @@ class BackendTestEngineerAgent:
         implementation_plan: Dict[str, Any],
         workspace_id: str,
         workspace_tools: WorkspaceTools,
+        run_id: Optional[str] = None,
     ) -> TestResult:
         """Run backend tests"""
+        
+        # Initialize WorkspaceTools with run_id for event publishing
+        if run_id and not workspace_tools.run_id:
+            workspace_tools.run_id = run_id
         
         prompt = ChatPromptTemplate.from_messages([
             ("system", """You are a backend test engineer agent. Your job is to execute and analyze test results.
@@ -64,31 +181,15 @@ Run the tests and analyze the results.""")
         tools = [run_tests, read_file]
         
         # Create agent
-        agent = create_tool_calling_agent(self.model, tools, prompt)
-        agent_executor = AgentExecutor(
-            agent=agent,
-            tools=tools,
-            verbose=False,
-            handle_parsing_errors=True,
-        )
-        
+        agent = create_agent(self.model, tools, system_prompt=prompt)
+        # LangChain 0.3+ pattern - invoke agent directly
         try:
-            result = await agent_executor.ainvoke({
+            result = await agent.ainvoke({
                 "task": task,
                 "implementation_plan": json.dumps(implementation_plan, indent=2),
             })
             
-            # Parse test output to extract metrics
-            # In production, this would use structured output
-            return TestResult(
-                total_tests=8,
-                passed=7,
-                failed=1,
-                skipped=0,
-                coverage=85.5,
-                test_output="",
-                failed_tests=[]
-            )
+            return _parse_test_result(result)
             
         except Exception as e:
             logger.error(f"Backend test engineer agent failed: {e}")
@@ -105,9 +206,11 @@ Run the tests and analyze the results.""")
 
 class AngularTestEngineerAgent:
     """Agent for Angular testing"""
-    
-    def __init__(self, model_name: str = "gpt-4"):
-        self.model = get_model(model_name)
+
+    def __init__(self, model_name: str = "gpt-4", mock_mode: bool = False, llm_provider: str = None):
+        self.model = get_model(model_name=model_name, mock_mode=mock_mode, llm_provider=llm_provider)
+        self.mock_mode = mock_mode
+        self.llm_provider = llm_provider
     
     async def run_tests(
         self,
@@ -115,8 +218,13 @@ class AngularTestEngineerAgent:
         implementation_plan: Dict[str, Any],
         workspace_id: str,
         workspace_tools: WorkspaceTools,
+        run_id: Optional[str] = None,
     ) -> TestResult:
         """Run Angular tests"""
+        
+        # Initialize WorkspaceTools with run_id for event publishing
+        if run_id and not workspace_tools.run_id:
+            workspace_tools.run_id = run_id
         
         prompt = ChatPromptTemplate.from_messages([
             ("system", """You are an Angular test engineer agent. Your job is to execute and analyze Angular test results.
@@ -154,29 +262,15 @@ Run the Angular tests and analyze the results.""")
         tools = [run_tests, read_file]
         
         # Create agent
-        agent = create_tool_calling_agent(self.model, tools, prompt)
-        agent_executor = AgentExecutor(
-            agent=agent,
-            tools=tools,
-            verbose=False,
-            handle_parsing_errors=True,
-        )
-        
+        agent = create_agent(self.model, tools, system_prompt=prompt)
+        # LangChain 0.3+ pattern - invoke agent directly
         try:
-            result = await agent_executor.ainvoke({
+            result = await agent.ainvoke({
                 "task": task,
                 "implementation_plan": json.dumps(implementation_plan, indent=2),
             })
             
-            return TestResult(
-                total_tests=12,
-                passed=12,
-                failed=0,
-                skipped=0,
-                coverage=92.3,
-                test_output="",
-                failed_tests=[]
-            )
+            return _parse_test_result(result)
             
         except Exception as e:
             logger.error(f"Angular test engineer agent failed: {e}")
@@ -193,9 +287,11 @@ Run the Angular tests and analyze the results.""")
 
 class CodeReviewerAgent:
     """Agent for code review"""
-    
-    def __init__(self, model_name: str = "gpt-4"):
-        self.model = get_model(model_name)
+
+    def __init__(self, model_name: str = "gpt-4", mock_mode: bool = False, llm_provider: str = None):
+        self.model = get_model(model_name=model_name, mock_mode=mock_mode, llm_provider=llm_provider)
+        self.mock_mode = mock_mode
+        self.llm_provider = llm_provider
     
     async def review(
         self,
@@ -204,8 +300,13 @@ class CodeReviewerAgent:
         code_diff: str,
         workspace_id: str,
         workspace_tools: WorkspaceTools,
+        run_id: Optional[str] = None,
     ) -> ReviewResult:
         """Review code changes"""
+        
+        # Initialize WorkspaceTools with run_id for event publishing
+        if run_id and not workspace_tools.run_id:
+            workspace_tools.run_id = run_id
         
         prompt = ChatPromptTemplate.from_messages([
             ("system", """You are a code reviewer agent. Your job is to review code changes for correctness, maintainability, security, and best practices.
@@ -251,40 +352,16 @@ Review the changes and provide findings.""")
         tools = [read_file, git_diff]
         
         # Create agent
-        agent = create_tool_calling_agent(self.model, tools, prompt)
-        agent_executor = AgentExecutor(
-            agent=agent,
-            tools=tools,
-            verbose=False,
-            handle_parsing_errors=True,
-        )
-        
+        agent = create_agent(self.model, tools, system_prompt=prompt)
+        # LangChain 0.3+ pattern - invoke agent directly
         try:
-            result = await agent_executor.ainvoke({
+            result = await agent.ainvoke({
                 "task": task,
                 "implementation_plan": json.dumps(implementation_plan, indent=2),
                 "code_diff": code_diff,
             })
             
-            # In production, this would use structured output
-            return ReviewResult(
-                decision="changes_required",
-                findings=[
-                    ReviewFinding(
-                        severity="medium",
-                        message="Add error handling",
-                        file=None,
-                        line=None
-                    ),
-                    ReviewFinding(
-                        severity="low",
-                        message="Improve variable naming",
-                        file=None,
-                        line=None
-                    )
-                ],
-                summary="Code review completed with minor suggestions"
-            )
+            return _parse_review_result(result)
             
         except Exception as e:
             logger.error(f"Code reviewer agent failed: {e}")
@@ -304,9 +381,11 @@ Review the changes and provide findings.""")
 
 class CompletionVerifierAgent:
     """Agent for verifying completion against acceptance criteria"""
-    
-    def __init__(self, model_name: str = "gpt-4"):
-        self.model = get_model(model_name)
+
+    def __init__(self, model_name: str = "gpt-4", mock_mode: bool = False, llm_provider: str = None):
+        self.model = get_model(model_name=model_name, mock_mode=mock_mode, llm_provider=llm_provider)
+        self.mock_mode = mock_mode
+        self.llm_provider = llm_provider
     
     async def verify(
         self,
@@ -316,8 +395,13 @@ class CompletionVerifierAgent:
         review_results: ReviewResult,
         workspace_id: str,
         workspace_tools: WorkspaceTools,
+        run_id: Optional[str] = None,
     ) -> VerificationResult:
         """Verify completion against acceptance criteria"""
+        
+        # Initialize WorkspaceTools with run_id for event publishing
+        if run_id and not workspace_tools.run_id:
+            workspace_tools.run_id = run_id
         
         prompt = ChatPromptTemplate.from_messages([
             ("system", """You are a completion verifier agent. Your job is to verify that the implementation meets all acceptance criteria.
@@ -368,16 +452,10 @@ Verify completion against the acceptance criteria.""")
         tools = [read_file, git_status, git_diff]
         
         # Create agent
-        agent = create_tool_calling_agent(self.model, tools, prompt)
-        agent_executor = AgentExecutor(
-            agent=agent,
-            tools=tools,
-            verbose=False,
-            handle_parsing_errors=True,
-        )
-        
+        agent = create_agent(self.model, tools, system_prompt=prompt)
+        # LangChain 0.3+ pattern - invoke agent directly
         try:
-            result = await agent_executor.ainvoke({
+            result = await agent.ainvoke({
                 "task": task,
                 "implementation_plan": json.dumps(implementation_plan, indent=2),
                 "acceptance_criteria": json.dumps(implementation_plan.get("acceptance_criteria", []), indent=2),
@@ -385,22 +463,7 @@ Verify completion against the acceptance criteria.""")
                 "review_results": review_results.model_dump_json(indent=2),
             })
             
-            # In production, this would use structured output
-            criteria = implementation_plan.get("acceptance_criteria", [])
-            criteria_results = [
-                CriterionResult(
-                    criterion=c,
-                    passed=True,
-                    evidence="Verified through testing and code review"
-                )
-                for c in criteria
-            ]
-            
-            return VerificationResult(
-                accepted=True,
-                criteria_results=criteria_results,
-                summary="All acceptance criteria have been met"
-            )
+            return _parse_verification_result(result, implementation_plan, test_results, review_results)
             
         except Exception as e:
             logger.error(f"Completion verifier agent failed: {e}")

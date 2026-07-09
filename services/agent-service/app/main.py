@@ -5,15 +5,15 @@ from contextlib import asynccontextmanager
 from internal.config import settings
 from internal.db import connect, disconnect, get_session
 from internal.chatkit import chatkit_router
-from internal.workflow.router import router as workflow_router
 from internal.messaging.nats import NATSMessaging
-from internal.workflow.event_streams import push_event
-from internal.handlers.nats import handle_agent_state_event, handle_worker_user_event
+from internal.event_streams import push_event
+from internal.handlers.nats import handle_agent_state_event
 from internal.chatkit.router import nats_client, get_nats_client
 from datetime import datetime, timezone
 import os
 import logging
 import asyncio
+import time
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -31,8 +31,9 @@ async def lifespan(app: FastAPI):
     # Connect to NATS
     try:
         nats_url = os.getenv("NATS_URL", "nats://localhost:4222")
+        service_id = os.getenv("SERVICE_ID", "agent-service")
         logger.info(f"Attempting to connect to NATS at {nats_url}")
-        nats_client = NATSMessaging(nats_url=nats_url)
+        nats_client = NATSMessaging(nats_url=nats_url, service_id=service_id)
         logger.info("NATSMessaging instance created")
         await nats_client.connect()
         logger.info("NATS connection established")
@@ -44,14 +45,14 @@ async def lifespan(app: FastAPI):
             run_id=None  # Subscribe to all runs
         )
         
-        # Subscribe to worker user events for final answers and progress
-        # Using subscribe_plain to listen to agent.chat.{run_id}.user.events
-        await nats_client.subscribe_plain(
-            subject="agent.chat.>.user.events",
-            handler=lambda event: handle_worker_user_event(event, push_event)
+        # Also subscribe to agent.chat.> for final_answer events
+        # This is a different subject than agent.events.>
+        await nats_client.subscribe_to_chat_events(
+            run_id=None,
+            event_handler=lambda event: handle_agent_state_event(event, push_event),
         )
         
-        logger.info("Connected to NATS and subscribed to agent state events and worker user events")
+        logger.info("Connected to NATS and subscribed to agent state events")
     except Exception as e:
         logger.error(f"Failed to connect to NATS: {e}")
         import traceback
@@ -87,8 +88,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    start_time = time.time()
+    logger.info(f"HTTP {request.method} {request.url.path}")
+    response = await call_next(request)
+    process_time = time.time() - start_time
+    logger.info(f"HTTP {request.method} {request.url.path} - Status: {response.status_code} - Time: {process_time:.3f}s")
+    return response
+
 app.include_router(chatkit_router, prefix="/api/chatkit", tags=["chatkit"])
-app.include_router(workflow_router, tags=["workflow"])
 
 @app.get("/healthz")
 async def health():

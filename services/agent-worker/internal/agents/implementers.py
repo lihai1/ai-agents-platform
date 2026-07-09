@@ -1,7 +1,7 @@
 """Implementation agents for Go, Angular, and DevOps"""
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, Optional, List
 from langchain_core.prompts import ChatPromptTemplate
-from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain.agents import create_agent
 from langchain_core.tools import tool
 from internal.agents.schemas import ImplementationResult
 from internal.agents.model_factory import get_model
@@ -12,11 +12,62 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _parse_implementation_result(result: dict) -> ImplementationResult:
+    """Parse an AgentExecutor result into an ImplementationResult"""
+    files_created = []
+    files_modified = []
+    lines_added = 0
+    lines_removed = 0
+    errors = []
+    warnings = []
+
+    intermediate_steps = result.get("intermediate_steps", [])
+    if intermediate_steps:
+        for action, observation in intermediate_steps:
+            try:
+                tool_name = getattr(action, "tool", None)
+                tool_input = getattr(action, "tool_input", None) or {}
+                obs = json.loads(observation) if isinstance(observation, str) else observation
+                if tool_name == "write_file" and obs.get("success"):
+                    file_path = tool_input.get("file_path") or obs.get("file_path")
+                    if file_path:
+                        files_created.append(file_path)
+                        content = tool_input.get("content", "")
+                        lines_added += max(len(content.splitlines()), 1)
+                elif tool_name == "git_diff":
+                    diff_text = obs.get("diff", obs.get("output", ""))
+                    if diff_text:
+                        for line in diff_text.splitlines():
+                            if line.startswith("+") and not line.startswith("+++"):
+                                lines_added += 1
+                            elif line.startswith("-") and not line.startswith("---"):
+                                lines_removed += 1
+            except Exception as e:
+                logger.warning(f"Failed to parse intermediate step: {e}")
+
+    output = result.get("output", "")
+    success = not errors and (result.get("success") if isinstance(result, dict) else True)
+    if not success:
+        success = True  # default to success if no errors observed
+
+    return ImplementationResult(
+        files_modified=files_modified,
+        files_created=files_created,
+        lines_added=lines_added,
+        lines_removed=lines_removed,
+        success=success,
+        errors=errors,
+        warnings=warnings,
+    )
+
+
 class GoDeveloperAgent:
     """Agent for Go backend development"""
-    
-    def __init__(self, model_name: str = "gpt-4"):
-        self.model = get_model(model_name)
+
+    def __init__(self, model_name: str = "gpt-4", mock_mode: bool = False, llm_provider: str = None):
+        self.model = get_model(model_name=model_name, mock_mode=mock_mode, llm_provider=llm_provider)
+        self.mock_mode = mock_mode
+        self.llm_provider = llm_provider
     
     async def implement(
         self,
@@ -25,8 +76,13 @@ class GoDeveloperAgent:
         repository_summary: Dict[str, Any],
         workspace_id: str,
         workspace_tools: WorkspaceTools,
+        run_id: Optional[str] = None,
     ) -> ImplementationResult:
         """Implement Go changes"""
+        
+        # Initialize WorkspaceTools with run_id for event publishing
+        if run_id and not workspace_tools.run_id:
+            workspace_tools.run_id = run_id
         
         prompt = ChatPromptTemplate.from_messages([
             ("system", """You are a Go developer agent. Your job is to implement the requested changes in a Go repository.
@@ -84,16 +140,10 @@ Implement the changes. Return a structured result with:
         tools = [write_file, read_file, git_status, git_diff]
         
         # Create agent
-        agent = create_tool_calling_agent(self.model, tools, prompt)
-        agent_executor = AgentExecutor(
-            agent=agent,
-            tools=tools,
-            verbose=False,
-            handle_parsing_errors=True,
-        )
-        
+        agent = create_agent(self.model, tools, system_prompt=prompt)
+        # LangChain 0.3+ pattern - invoke agent directly
         try:
-            result = await agent_executor.ainvoke({
+            result = await agent.ainvoke({
                 "task": task,
                 "implementation_plan": json.dumps(implementation_plan, indent=2),
                 "repository_summary": json.dumps(repository_summary, indent=2),
@@ -101,15 +151,7 @@ Implement the changes. Return a structured result with:
             
             # Parse the output to extract implementation result
             # In production, this would use structured output
-            return ImplementationResult(
-                files_modified=[],
-                files_created=[],
-                lines_added=0,
-                lines_removed=0,
-                success=True,
-                errors=[],
-                warnings=[]
-            )
+            return _parse_implementation_result(result)
             
         except Exception as e:
             logger.error(f"Go developer agent failed: {e}")
@@ -126,9 +168,11 @@ Implement the changes. Return a structured result with:
 
 class AngularDeveloperAgent:
     """Agent for Angular component development"""
-    
-    def __init__(self, model_name: str = "gpt-4"):
-        self.model = get_model(model_name)
+
+    def __init__(self, model_name: str = "gpt-4", mock_mode: bool = False, llm_provider: str = None):
+        self.model = get_model(model_name=model_name, mock_mode=mock_mode, llm_provider=llm_provider)
+        self.mock_mode = mock_mode
+        self.llm_provider = llm_provider
     
     async def implement(
         self,
@@ -137,8 +181,13 @@ class AngularDeveloperAgent:
         repository_summary: Dict[str, Any],
         workspace_id: str,
         workspace_tools: WorkspaceTools,
+        run_id: Optional[str] = None,
     ) -> ImplementationResult:
         """Implement Angular changes"""
+        
+        # Initialize WorkspaceTools with run_id for event publishing
+        if run_id and not workspace_tools.run_id:
+            workspace_tools.run_id = run_id
         
         prompt = ChatPromptTemplate.from_messages([
             ("system", """You are an Angular developer agent. Your job is to implement the requested changes in an Angular repository.
@@ -197,30 +246,16 @@ Implement the changes. Return a structured result with:
         tools = [write_file, read_file, git_status, git_diff]
         
         # Create agent
-        agent = create_tool_calling_agent(self.model, tools, prompt)
-        agent_executor = AgentExecutor(
-            agent=agent,
-            tools=tools,
-            verbose=False,
-            handle_parsing_errors=True,
-        )
-        
+        agent = create_agent(self.model, tools, system_prompt=prompt)
+        # LangChain 0.3+ pattern - invoke agent directly
         try:
-            result = await agent_executor.ainvoke({
+            result = await agent.ainvoke({
                 "task": task,
                 "implementation_plan": json.dumps(implementation_plan, indent=2),
                 "repository_summary": json.dumps(repository_summary, indent=2),
             })
             
-            return ImplementationResult(
-                files_modified=[],
-                files_created=[],
-                lines_added=0,
-                lines_removed=0,
-                success=True,
-                errors=[],
-                warnings=[]
-            )
+            return _parse_implementation_result(result)
             
         except Exception as e:
             logger.error(f"Angular developer agent failed: {e}")
@@ -237,9 +272,11 @@ Implement the changes. Return a structured result with:
 
 class AngularUIDeveloperAgent:
     """Agent for Angular UI/UX work"""
-    
-    def __init__(self, model_name: str = "gpt-4"):
-        self.model = get_model(model_name)
+
+    def __init__(self, model_name: str = "gpt-4", mock_mode: bool = False, llm_provider: str = None):
+        self.model = get_model(model_name=model_name, mock_mode=mock_mode, llm_provider=llm_provider)
+        self.mock_mode = mock_mode
+        self.llm_provider = llm_provider
     
     async def implement(
         self,
@@ -248,8 +285,13 @@ class AngularUIDeveloperAgent:
         repository_summary: Dict[str, Any],
         workspace_id: str,
         workspace_tools: WorkspaceTools,
+        run_id: Optional[str] = None,
     ) -> ImplementationResult:
         """Implement Angular UI changes"""
+        
+        # Initialize WorkspaceTools with run_id for event publishing
+        if run_id and not workspace_tools.run_id:
+            workspace_tools.run_id = run_id
         
         prompt = ChatPromptTemplate.from_messages([
             ("system", """You are an Angular UI developer agent. Your job is to implement UI/UX changes in an Angular repository.
@@ -307,30 +349,16 @@ Implement the UI changes. Return a structured result with:
         tools = [write_file, read_file, git_status, git_diff]
         
         # Create agent
-        agent = create_tool_calling_agent(self.model, tools, prompt)
-        agent_executor = AgentExecutor(
-            agent=agent,
-            tools=tools,
-            verbose=False,
-            handle_parsing_errors=True,
-        )
-        
+        agent = create_agent(self.model, tools, system_prompt=prompt)
+        # LangChain 0.3+ pattern - invoke agent directly
         try:
-            result = await agent_executor.ainvoke({
+            result = await agent.ainvoke({
                 "task": task,
                 "implementation_plan": json.dumps(implementation_plan, indent=2),
                 "repository_summary": json.dumps(repository_summary, indent=2),
             })
             
-            return ImplementationResult(
-                files_modified=[],
-                files_created=[],
-                lines_added=0,
-                lines_removed=0,
-                success=True,
-                errors=[],
-                warnings=[]
-            )
+            return _parse_implementation_result(result)
             
         except Exception as e:
             logger.error(f"Angular UI developer agent failed: {e}")
@@ -347,9 +375,11 @@ Implement the UI changes. Return a structured result with:
 
 class DevOpsDeveloperAgent:
     """Agent for DevOps and infrastructure changes"""
-    
-    def __init__(self, model_name: str = "gpt-4"):
-        self.model = get_model(model_name)
+
+    def __init__(self, model_name: str = "gpt-4", mock_mode: bool = False, llm_provider: str = None):
+        self.model = get_model(model_name=model_name, mock_mode=mock_mode, llm_provider=llm_provider)
+        self.mock_mode = mock_mode
+        self.llm_provider = llm_provider
     
     async def implement(
         self,
@@ -358,8 +388,13 @@ class DevOpsDeveloperAgent:
         repository_summary: Dict[str, Any],
         workspace_id: str,
         workspace_tools: WorkspaceTools,
+        run_id: Optional[str] = None,
     ) -> ImplementationResult:
         """Implement DevOps changes"""
+        
+        # Initialize WorkspaceTools with run_id for event publishing
+        if run_id and not workspace_tools.run_id:
+            workspace_tools.run_id = run_id
         
         prompt = ChatPromptTemplate.from_messages([
             ("system", """You are a DevOps developer agent. Your job is to implement infrastructure and deployment changes.
@@ -416,30 +451,16 @@ Implement the DevOps changes. Return a structured result with:
         tools = [write_file, read_file, git_status, git_diff]
         
         # Create agent
-        agent = create_tool_calling_agent(self.model, tools, prompt)
-        agent_executor = AgentExecutor(
-            agent=agent,
-            tools=tools,
-            verbose=False,
-            handle_parsing_errors=True,
-        )
-        
+        agent = create_agent(self.model, tools, system_prompt=prompt)
+        # LangChain 0.3+ pattern - invoke agent directly
         try:
-            result = await agent_executor.ainvoke({
+            result = await agent.ainvoke({
                 "task": task,
                 "implementation_plan": json.dumps(implementation_plan, indent=2),
                 "repository_summary": json.dumps(repository_summary, indent=2),
             })
             
-            return ImplementationResult(
-                files_modified=[],
-                files_created=[],
-                lines_added=0,
-                lines_removed=0,
-                success=True,
-                errors=[],
-                warnings=[]
-            )
+            return _parse_implementation_result(result)
             
         except Exception as e:
             logger.error(f"DevOps developer agent failed: {e}")

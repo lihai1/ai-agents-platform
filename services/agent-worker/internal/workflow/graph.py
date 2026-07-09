@@ -1,6 +1,6 @@
 from typing import Dict, Any
 from langgraph.graph import StateGraph, END
-from langgraph.checkpoint.postgres import PostgresSaver
+from langgraph.checkpoint.memory import MemorySaver
 from internal.workflow.state import EngineeringState
 from internal.workflow.nodes import (
     created_node,
@@ -38,6 +38,14 @@ def should_repair(state: EngineeringState) -> str:
     return "repair"
 
 
+def check_verification(state: EngineeringState) -> str:
+    """Route based on verification results"""
+    verification_results = state.get("verification_results") or {}
+    if verification_results.get("accepted", False):
+        return "completed"
+    return should_repair(state)
+
+
 def check_budget(state: EngineeringState) -> str:
     """Check if budget exceeded"""
     max_tokens = state.get("max_tokens")
@@ -52,7 +60,7 @@ def check_budget(state: EngineeringState) -> str:
     return "continue"
 
 
-def create_workflow_graph(checkpointer: PostgresSaver) -> StateGraph:
+def create_workflow_graph(checkpointer: MemorySaver) -> StateGraph:
     """Create the main LangGraph workflow"""
     
     workflow = StateGraph(EngineeringState)
@@ -150,12 +158,12 @@ def create_workflow_graph(checkpointer: PostgresSaver) -> StateGraph:
         }
     )
     
-    # VERIFYING -> (budget check, repair check) -> COMPLETED, REPAIRING, FAILED, or BUDGET_EXCEEDED
+    # VERIFYING -> (budget check, verification check) -> COMPLETED, REPAIRING, FAILED, or BUDGET_EXCEEDED
     workflow.add_conditional_edges(
         "VERIFYING",
-        lambda state: check_budget(state) if check_budget(state) != "continue" else should_repair(state),
+        lambda state: check_budget(state) if check_budget(state) != "continue" else check_verification(state),
         {
-            "continue": "COMPLETED",
+            "completed": "COMPLETED",
             "repair": "REPAIRING",
             "failed": "FAILED",
             "budget_exceeded": "BUDGET_EXCEEDED"
@@ -191,13 +199,13 @@ def create_workflow_graph(checkpointer: PostgresSaver) -> StateGraph:
     return workflow.compile(checkpointer=checkpointer)
 
 
-async def create_run(state: EngineeringState, checkpointer: PostgresSaver) -> Dict[str, Any]:
+async def create_run(state: EngineeringState, checkpointer: MemorySaver) -> Dict[str, Any]:
     """Create and start a new run"""
     graph = create_workflow_graph(checkpointer)
     
     # Initialize state with defaults
     initial_state = {
-        "chat_id": state.get("chat_id"),
+        "run_id": state.get("run_id"),
         "user_id": state.get("user_id"),
         "project_id": state.get("project_id"),
         "repository_id": state.get("repository_id"),
@@ -228,10 +236,11 @@ async def create_run(state: EngineeringState, checkpointer: PostgresSaver) -> Di
         "pending_approvals": [],
         "approval_decisions": {},
         "mock_mode": state.get("mock_mode", False),
+        "llm_provider": state.get("llm_provider"),
     }
     
     # Run the workflow
-    config = {"configurable": {"thread_id": initial_state["chat_id"]}}
+    config = {"configurable": {"thread_id": initial_state["run_id"]}}
     result = await graph.ainvoke(initial_state, config)
     
     return result

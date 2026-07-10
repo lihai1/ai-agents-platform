@@ -9,10 +9,7 @@ from internal.workflow.graph import create_run
 from internal.workflow.checkpointer import get_checkpointer
 from internal.config import settings
 from internal.handlers.nats import (
-    handle_command,
     handle_run_start,
-    handle_run_cancel,
-    handle_run_resume,
     publish_worker_ready,
 )
 
@@ -31,7 +28,7 @@ class AgentWorker:
         self.running = False
     
     async def start(self) -> None:
-        """Start the worker"""
+        """Start the worker and auto-start the run"""
         logger.info(f"Starting agent worker for run {self.run_id or 'general'}")
         
         # Connect to NATS
@@ -42,24 +39,35 @@ class AgentWorker:
         # Small delay to ensure connection is stable
         await asyncio.sleep(0.5)
         
-        # Subscribe to orchestration events for this run
-        await self.nats.subscribe_to_orchestration_events(
-            command_handler=lambda cmd: handle_command(
-                cmd,
-                lambda run_id, payload: handle_run_start(run_id, payload, create_run, get_checkpointer),
-                handle_run_cancel,
-                handle_run_resume
-            ),
-            run_id=self.run_id  # agent.chat.{run_id}.user.events
-        )
-       
-        logger.info("Worker subscribed to orchestration events (agent.chat.{run_id}.user.events)")
-        
+        # Auto-start the run immediately (no need to wait for NATS command)
+        if self.run_id:
+            logger.info(f"Auto-starting run {self.run_id}")
+            await handle_run_start(
+                self.run_id, 
+                {
+                    "user_id": os.getenv("USER_ID", ""),
+                    "project_id": os.getenv("PROJECT_ID", ""),
+                    "repository_id": os.getenv("REPOSITORY_ID", ""),
+                    "chatkit_thread_id": os.getenv("CHATKIT_THREAD_ID", ""),
+                    "task": os.getenv("TASK", ""),
+                    "max_tokens": int(os.getenv("MAX_TOKENS", "0")) if os.getenv("MAX_TOKENS") else None,
+                    "max_cost": float(os.getenv("MAX_COST", "0")) if os.getenv("MAX_COST") else None,
+                    "max_repair_count": int(os.getenv("MAX_REPAIR_COUNT", "2")),
+                    "mock_mode": os.getenv("MOCK_MODE", "false").lower() == "true",
+                    "llm_provider": os.getenv("LLM_PROVIDER", "ollama"),
+                    "model_name": os.getenv("MODEL_NAME", "qwen3.5:9b"),
+                    "agent_type": os.getenv("AGENT_TYPE", "specialist"),
+                },
+                create_run, 
+                get_checkpointer
+            )
+        else:
+            logger.warning("No run_id provided, worker will not auto-start any run")
 
         # Publish worker ready signal before starting the workflow
         await publish_worker_ready(self.run_id, self.nats)
         self.running = True
-        logger.info(f"Agent worker started and listening for orchestration events on run {self.run_id or 'general'}")
+        logger.info(f"Agent worker started and auto-started run {self.run_id or 'general'}")
     
     async def stop(self) -> None:
         """Stop the worker"""

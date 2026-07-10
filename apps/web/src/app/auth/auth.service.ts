@@ -26,8 +26,13 @@ export class AuthService {
     return this.http.post<User>('/auth/register', { email, password, name });
   }
 
+  getCurrentUser(): Observable<User> {
+    return this.http.get<User>('/auth/me');
+  }
+
   logout(): void {
     localStorage.removeItem('jwt_token');
+    localStorage.removeItem('user');
   }
 
   isAuthenticated(): boolean {
@@ -36,5 +41,18 @@ export class AuthService {
 
   getToken(): string | null {
     return localStorage.getItem('jwt_token');
+  }
+
+  setToken(token: string): void {
+    localStorage.setItem('jwt_token', token);
+  }
+
+  getUser(): User | null {
+    const userStr = localStorage.getItem('user');
+    return userStr ? JSON.parse(userStr) : null;
+  }
+
+  setUser(user: User): void {
+    localStorage.setItem('user', JSON.stringify(user));
   }
 }

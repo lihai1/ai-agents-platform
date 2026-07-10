@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/agentic-engineering/control-plane/internal/service"
 )
@@ -51,6 +52,30 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	user, err := h.authService.Register(req.Email, req.Password, req.Name)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(user)
+}
+
+func (h *AuthHandler) GetCurrentUser(w http.ResponseWriter, r *http.Request) {
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		http.Error(w, "Authorization header required", http.StatusUnauthorized)
+		return
+	}
+
+	tokenString := ""
+	if strings.HasPrefix(authHeader, "Bearer ") {
+		tokenString = strings.TrimPrefix(authHeader, "Bearer ")
+	} else {
+		tokenString = authHeader
+	}
+
+	user, err := h.authService.GetCurrentUser(tokenString)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
 

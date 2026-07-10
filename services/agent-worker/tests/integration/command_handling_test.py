@@ -7,7 +7,7 @@ from message_fixtures import run_start_fixture
 @pytest.mark.integration
 async def test_publish_run_start_command(nats_test_client, sample_run_id, sample_user_id, sample_repository_id, sample_project_id):
     """Test publishing run.start command to NATS"""
-    subject = f"agent.chat.{sample_run_id}.user.events"
+    subject = f"agent.chat.{sample_run_id}.start"
     message = run_start_fixture(
         run_id=sample_run_id,
         user_id=sample_user_id,
@@ -25,7 +25,7 @@ async def test_publish_run_start_command(nats_test_client, sample_run_id, sample
 @pytest.mark.integration
 async def test_publish_unknown_command(nats_test_client, sample_run_id):
     """Test publishing unknown command type to NATS"""
-    subject = f"agent.chat.{sample_run_id}.user.events"
+    subject = f"agent.chat.{sample_run_id}.start"
     message = {
         "message_id": "test-msg-unknown",
         "command_type": "unknown_command",
@@ -44,7 +44,7 @@ async def test_publish_unknown_command(nats_test_client, sample_run_id):
 @pytest.mark.integration
 async def test_publish_run_start_with_payload(nats_test_client, sample_run_id):
     """Test publishing run.start command with full payload to NATS"""
-    subject = f"agent.chat.{sample_run_id}.user.events"
+    subject = f"agent.chat.{sample_run_id}.start"
     message = run_start_fixture(
         run_id=sample_run_id,
         user_id="test-user-123",

@@ -11,6 +11,7 @@ def get_event_type(event: dict[str, Any]) -> str:
         event.get("event_type")
         or event.get("type")
         or event.get("name")
+        or event.get("command_type")
         or ""
     )
 
@@ -49,6 +50,18 @@ def is_cancelled_event(event: dict[str, Any]) -> bool:
 
 def final_answer_from_event(event: dict[str, Any]) -> str:
     payload = _payload(event)
+    event_type = get_event_type(event)
+    
+    # Handle failed events with error content
+    if payload.get("error") or event_type in {"failed", "agent.failed", "agent.run.failed", "run.failed"}:
+        error_content = payload.get("content") or payload.get("error") or payload.get("message")
+        if error_content:
+            return error_content
+        errors = payload.get("errors", [])
+        if errors:
+            return f"Task failed: {errors[0]}"
+        return "Task failed with unknown error"
+    
     return (
         payload.get("content")
         or payload.get("message")
@@ -76,7 +89,7 @@ def progress_from_event(event: dict[str, Any]) -> ProgressUpdateEvent:
             text="Agent runner scheduled.",
         )
 
-    if event_type in {"agent.started", "agent.run.started", "started", "run.started"}:
+    if event_type in {"agent.started", "agent.run.started", "started", "run.started", "run.start"}:
         return ProgressUpdateEvent(
             icon="play",
             text="Agent runner started.",
@@ -140,9 +153,40 @@ def progress_from_event(event: dict[str, Any]) -> ProgressUpdateEvent:
             ),
         )
 
+    # Handle workflow state events
+    if event_type in {
+        "created",
+        "preparing_workspace",
+        "scouting",
+        "planning",
+        "designing",
+        "implementing",
+        "testing",
+        "reviewing",
+        "verifying",
+    }:
+        state_text = {
+            "created": "Initializing workflow",
+            "preparing_workspace": "Preparing workspace",
+            "scouting": "Scouting repository",
+            "planning": "Planning implementation",
+            "designing": "Designing solution",
+            "implementing": "Implementing changes",
+            "testing": "Running tests",
+            "reviewing": "Reviewing changes",
+            "verifying": "Verifying results",
+        }.get(event_type, event_type.replace("_", " ").title())
+        
+        return ProgressUpdateEvent(
+            icon="agent",
+            text=state_text,
+        )
+
+    # Fallback: only include event_type if it's not empty
+    fallback_text = f"Event received: {event_type}" if event_type else "Event received"
     return ProgressUpdateEvent(
         icon="info",
         text=payload.get("message")
         or payload.get("content")
-        or event.get("message", f"Event received: {event_type}"),
+        or event.get("message", fallback_text),
     )

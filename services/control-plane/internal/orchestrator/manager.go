@@ -9,6 +9,44 @@ import (
 	"github.com/google/uuid"
 )
 
+// RepositoryConfig holds repository-related configuration
+type RepositoryConfig struct {
+	RunID         string
+	RepositoryURL string
+	Branch        string
+	RepositoryID  string
+	Credentials   *RepositoryCredentials
+}
+
+// LLMConfig holds LLM-related configuration
+type LLMConfig struct {
+	MockMode    bool
+	LLMProvider string
+	ModelName   string
+	APIKey      string
+}
+
+// WorkerContainerConfig holds container deployment configuration
+type WorkerContainerConfig struct {
+	ImageName           string
+	ContainerNamePrefix string
+	Network             string
+	NATSURL             string
+	AgentType           string
+}
+
+// RunParameters holds run-specific parameters
+type RunParameters struct {
+	UserID          string
+	ProjectID       string
+	RepositoryID    string
+	Task            string
+	ChatkitThreadID string
+	MaxTokens       int
+	MaxCost         float64
+	MaxRepairCount  int
+}
+
 // Manager manages container lifecycle for runs
 type Manager struct {
 	orchestrator ContainerOrchestrator
@@ -19,67 +57,6 @@ func NewManager(orchestrator ContainerOrchestrator) *Manager {
 	return &Manager{
 		orchestrator: orchestrator,
 	}
-}
-
-// CreateChatContainer creates a new container for a run
-func (m *Manager) CreateChatContainer(runID, repositoryURL, branch string, credentials *RepositoryCredentials, mockMode bool) (*ChatContainerInfo, error) {
-	containerName := fmt.Sprintf("automated-run-%s", runID)
-	config := ContainerConfig{
-		RunID:         runID,
-		RepositoryURL: repositoryURL,
-		Branch:        branch,
-		Credentials:   credentials,
-		Image:         "agentic-agent-worker:latest",
-		ContainerName: containerName,
-		Network:       "agentic-network",
-		EnvVars: map[string]string{
-			"RUN_ID":         runID,
-			"REPOSITORY_URL": repositoryURL,
-			"BRANCH":         branch,
-			"NATS_URL":       "nats://nats:4222",
-			"MOCK_MODE":      "false",
-		},
-	}
-
-	if mockMode {
-		config.EnvVars["MOCK_MODE"] = "true"
-	}
-
-	if credentials != nil {
-		config.EnvVars["GIT_USERNAME"] = credentials.Username
-		config.EnvVars["GIT_TOKEN"] = credentials.Token
-	}
-
-	// Pass through environment variables required by the worker
-	for _, key := range []string{
-		"DATABASE_URL",
-		"OPENAI_API_KEY",
-		"ANTHROPIC_API_KEY",
-		"OLLAMA_BASE_URL",
-		"LANGSMITH_API_KEY",
-		"LANGSMITH_PROJECT",
-		"LLM_PROVIDER",
-	} {
-		if value := os.Getenv(key); value != "" {
-			config.EnvVars[key] = value
-		}
-	}
-
-	result, err := m.orchestrator.CreateContainer(config)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create container: %w", err)
-	}
-
-	return &ChatContainerInfo{
-		ID:            uuid.New().String(),
-		RunID:         runID,
-		ContainerID:   result.ContainerID,
-		ContainerName: containerName,
-		RepositoryURL: repositoryURL,
-		Branch:        branch,
-		Status:        result.Status,
-		CreatedAt:     time.Now(),
-	}, nil
 }
 
 // StopChatContainer stops a chat container
@@ -119,43 +96,60 @@ func (m *Manager) GetChatContainerStatus(containerID string) (*ChatContainerStat
 }
 
 // StartWorker starts a worker container for a run
-func (m *Manager) StartWorker(runID, repositoryURL, branch string, credentials *RepositoryCredentials, mockMode bool) (*ChatContainerInfo, error) {
-	return m.CreateChatContainer(runID, repositoryURL, branch, credentials, mockMode)
+func (m *Manager) StartWorker(repoConfig RepositoryConfig, llmConfig LLMConfig) (*ChatContainerInfo, error) {
+	return m.CreateSpecialistAgentContainer(repoConfig, llmConfig)
 }
 
-// CreateSingleAgentContainer creates a new container for a single-agent worker
-// TODO: Make agent type configurable via request parameters or configuration
-// Currently hardcoded to use the single-agent Docker image
-func (m *Manager) CreateSingleAgentContainer(runID, repositoryURL, branch string, credentials *RepositoryCredentials, mockMode bool) (*ChatContainerInfo, error) {
-	containerName := fmt.Sprintf("single-agent-run-%s", runID)
+// createContainerWithConfig is a helper method that creates a container with the given configuration
+func (m *Manager) createContainerWithConfig(repoConfig RepositoryConfig, llmConfig LLMConfig, containerConfig WorkerContainerConfig) (*ChatContainerInfo, error) {
+	containerName := fmt.Sprintf("%s-%s", containerConfig.ContainerNamePrefix, repoConfig.RunID)
 	config := ContainerConfig{
-		RunID:         runID,
-		RepositoryURL: repositoryURL,
-		Branch:        branch,
-		Credentials:   credentials,
-		// TODO: Make image name configurable via environment variable or config file
-		// Currently hardcoded to single-agent image
-		Image:         "agentic-single-agent-worker:latest",
+		RunID:         repoConfig.RunID,
+		RepositoryURL: repoConfig.RepositoryURL,
+		Branch:        repoConfig.Branch,
+		Credentials:   repoConfig.Credentials,
+		Image:         containerConfig.ImageName,
 		ContainerName: containerName,
-		Network:       "control-plane_default",
+		Network:       containerConfig.Network,
 		EnvVars: map[string]string{
-			"RUN_ID":         runID,
-			"REPOSITORY_URL": repositoryURL,
-			"BRANCH":         branch,
-			"NATS_URL":       "nats://agentic-nats:4222",
-			"MOCK_MODE":      "false",
-			// TODO: Make agent type configurable - currently hardcoded
-			"AGENT_TYPE": "single-agent",
+			"RUN_ID":            repoConfig.RunID,
+			"REPOSITORY_URL":    repoConfig.RepositoryURL,
+			"BRANCH":            repoConfig.Branch,
+			"NATS_URL":          containerConfig.NATSURL,
+			"MOCK_MODE":         os.Getenv("MOCK_MODE"),
+			"LLM_PROVIDER":      llmConfig.LLMProvider,
+			"MODEL_NAME":        llmConfig.ModelName,
+			"API_KEY":           llmConfig.APIKey,
+			"USER_ID":           "",  // Will be set from chat message
+			"PROJECT_ID":        "",  // Will be set from chat message
+			"REPOSITORY_ID":     "",  // Will be set from chat message
+			"TASK":              "",  // Will be set from chat message
+			"CHATKIT_THREAD_ID": "",  // Will be set from chat message
+			"MAX_TOKENS":        "",  // Will be set from chat message
+			"MAX_COST":          "",  // Will be set from chat message
+			"MAX_REPAIR_COUNT":  "2", // Default value
 		},
 	}
 
-	if mockMode {
+	if containerConfig.AgentType != "" {
+		config.EnvVars["AGENT_TYPE"] = containerConfig.AgentType
+	}
+
+	// Set MOCK_MODE from environment variable with default "false"
+	mockModeEnv := os.Getenv("MOCK_MODE")
+	if mockModeEnv == "" {
+		mockModeEnv = "false"
+	}
+	config.EnvVars["MOCK_MODE"] = mockModeEnv
+
+	// Override with parameter if explicitly set to true
+	if llmConfig.MockMode {
 		config.EnvVars["MOCK_MODE"] = "true"
 	}
 
-	if credentials != nil {
-		config.EnvVars["GIT_USERNAME"] = credentials.Username
-		config.EnvVars["GIT_TOKEN"] = credentials.Token
+	if repoConfig.Credentials != nil {
+		config.EnvVars["GIT_USERNAME"] = repoConfig.Credentials.Username
+		config.EnvVars["GIT_TOKEN"] = repoConfig.Credentials.Token
 	}
 
 	// Pass through environment variables required by the worker
@@ -166,28 +160,133 @@ func (m *Manager) CreateSingleAgentContainer(runID, repositoryURL, branch string
 		"OLLAMA_BASE_URL",
 		"LANGSMITH_API_KEY",
 		"LANGSMITH_PROJECT",
-		"LLM_PROVIDER",
 	} {
-		if value := os.Getenv(key); value != "" {
-			config.EnvVars[key] = value
+		if val := os.Getenv(key); val != "" {
+			config.EnvVars[key] = val
 		}
 	}
 
 	result, err := m.orchestrator.CreateContainer(config)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create single-agent container: %w", err)
+		return nil, fmt.Errorf("failed to create container: %w", err)
 	}
 
 	return &ChatContainerInfo{
 		ID:            uuid.New().String(),
-		RunID:         runID,
+		RunID:         repoConfig.RunID,
 		ContainerID:   result.ContainerID,
 		ContainerName: containerName,
-		RepositoryURL: repositoryURL,
-		Branch:        branch,
+		RepositoryURL: repoConfig.RepositoryURL,
+		Branch:        repoConfig.Branch,
 		Status:        result.Status,
 		CreatedAt:     time.Now(),
 	}, nil
+}
+
+// createContainerWithConfigAndParams is a helper method that creates a container with the given configuration and run parameters
+func (m *Manager) createContainerWithConfigAndParams(repoConfig RepositoryConfig, llmConfig LLMConfig, containerConfig WorkerContainerConfig, runParams RunParameters) (*ChatContainerInfo, error) {
+	containerName := fmt.Sprintf("%s-%s", containerConfig.ContainerNamePrefix, repoConfig.RunID)
+	config := ContainerConfig{
+		RunID:         repoConfig.RunID,
+		RepositoryURL: repoConfig.RepositoryURL,
+		Branch:        repoConfig.Branch,
+		Credentials:   repoConfig.Credentials,
+		Image:         containerConfig.ImageName,
+		ContainerName: containerName,
+		Network:       containerConfig.Network,
+		EnvVars: map[string]string{
+			"RUN_ID":            repoConfig.RunID,
+			"REPOSITORY_URL":    repoConfig.RepositoryURL,
+			"BRANCH":            repoConfig.Branch,
+			"NATS_URL":          containerConfig.NATSURL,
+			"MOCK_MODE":         "false",
+			"LLM_PROVIDER":      llmConfig.LLMProvider,
+			"MODEL_NAME":        llmConfig.ModelName,
+			"API_KEY":           llmConfig.APIKey,
+			"USER_ID":           runParams.UserID,
+			"PROJECT_ID":        runParams.ProjectID,
+			"REPOSITORY_ID":     runParams.RepositoryID,
+			"TASK":              runParams.Task,
+			"CHATKIT_THREAD_ID": runParams.ChatkitThreadID,
+			"MAX_TOKENS":        fmt.Sprintf("%d", runParams.MaxTokens),
+			"MAX_COST":          fmt.Sprintf("%f", runParams.MaxCost),
+			"MAX_REPAIR_COUNT":  fmt.Sprintf("%d", runParams.MaxRepairCount),
+		},
+	}
+
+	if containerConfig.AgentType != "" {
+		config.EnvVars["AGENT_TYPE"] = containerConfig.AgentType
+	}
+
+	// Set MOCK_MODE from environment variable with default "false"
+	mockModeEnv := os.Getenv("MOCK_MODE")
+	if mockModeEnv == "" {
+		mockModeEnv = "false"
+	}
+	config.EnvVars["MOCK_MODE"] = mockModeEnv
+
+	// Override with parameter if explicitly set to true
+	if llmConfig.MockMode {
+		config.EnvVars["MOCK_MODE"] = "true"
+	}
+
+	if repoConfig.Credentials != nil {
+		config.EnvVars["GIT_USERNAME"] = repoConfig.Credentials.Username
+		config.EnvVars["GIT_TOKEN"] = repoConfig.Credentials.Token
+	}
+
+	// Pass through environment variables required by the worker
+	for _, key := range []string{
+		"DATABASE_URL",
+		"OPENAI_API_KEY",
+		"ANTHROPIC_API_KEY",
+		"OLLAMA_BASE_URL",
+		"LANGSMITH_API_KEY",
+		"LANGSMITH_PROJECT",
+	} {
+		if val := os.Getenv(key); val != "" {
+			config.EnvVars[key] = val
+		}
+	}
+
+	result, err := m.orchestrator.CreateContainer(config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create container: %w", err)
+	}
+
+	return &ChatContainerInfo{
+		ID:            uuid.New().String(),
+		ContainerID:   result.ContainerID,
+		ContainerName: containerName,
+		RepositoryURL: repoConfig.RepositoryURL,
+		Branch:        repoConfig.Branch,
+		Status:        result.Status,
+		CreatedAt:     time.Now(),
+	}, nil
+}
+
+// CreateSingleAgentContainer creates a new container for a single-agent worker
+func (m *Manager) CreateSingleAgentContainer(repoConfig RepositoryConfig, llmConfig LLMConfig) (*ChatContainerInfo, error) {
+	containerConfig := WorkerContainerConfig{
+		ImageName:           "agentic-single-agent-worker:latest",
+		ContainerNamePrefix: "automated-single-agent-run",
+		Network:             "agentic-network",
+		NATSURL:             "nats://nats:4222",
+		AgentType:           "single-agent",
+	}
+	return m.createContainerWithConfig(repoConfig, llmConfig, containerConfig)
+}
+
+// CreateSpecialistAgentContainer creates a new container for a specialist agent (multi-agent) worker
+func (m *Manager) CreateSpecialistAgentContainer(repoConfig RepositoryConfig, llmConfig LLMConfig) (*ChatContainerInfo, error) {
+	containerConfig := WorkerContainerConfig{
+		ImageName:           "agentic-agent-worker:latest",
+		ContainerNamePrefix: "automated-specialists-run",
+		Network:             "agentic-network",
+		NATSURL:             "nats://nats:4222",
+		AgentType:           "", // No AGENT_TYPE for specialist mode
+	}
+	return m.createContainerWithConfig(repoConfig, llmConfig, containerConfig)
 }
 
 // StopWorker stops and removes a worker container for a run
@@ -203,6 +302,30 @@ func (m *Manager) StopWorker(containerID string) error {
 	}
 
 	return nil
+}
+
+// CreateSingleAgentContainerWithParams creates a new container for a single-agent worker with run parameters
+func (m *Manager) CreateSingleAgentContainerWithParams(repoConfig RepositoryConfig, llmConfig LLMConfig, runParams RunParameters) (*ChatContainerInfo, error) {
+	containerConfig := WorkerContainerConfig{
+		ImageName:           "agentic-single-agent-worker:latest",
+		ContainerNamePrefix: "automated-single-agent-run",
+		Network:             "agentic-network",
+		NATSURL:             "nats://nats:4222",
+		AgentType:           "single-agent",
+	}
+	return m.createContainerWithConfigAndParams(repoConfig, llmConfig, containerConfig, runParams)
+}
+
+// CreateSpecialistAgentContainerWithParams creates a new container for a specialist agent (multi-agent) worker with run parameters
+func (m *Manager) CreateSpecialistAgentContainerWithParams(repoConfig RepositoryConfig, llmConfig LLMConfig, runParams RunParameters) (*ChatContainerInfo, error) {
+	containerConfig := WorkerContainerConfig{
+		ImageName:           "agentic-agent-worker:latest",
+		ContainerNamePrefix: "automated-specialists-run",
+		Network:             "agentic-network",
+		NATSURL:             "nats://nats:4222",
+		AgentType:           "multi-agent",
+	}
+	return m.createContainerWithConfigAndParams(repoConfig, llmConfig, containerConfig, runParams)
 }
 
 // ChatContainerInfo holds information about a run container

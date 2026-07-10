@@ -7,7 +7,7 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 
 
-async def handle_command(command: dict, handle_run_start_func, handle_run_cancel_func, handle_run_resume_func) -> None:
+async def handle_command(command: dict, handle_run_start_func) -> None:
     """Handle incoming command"""
     command_type = command.get("command_type")
     run_id = command.get("run_id")
@@ -19,10 +19,6 @@ async def handle_command(command: dict, handle_run_start_func, handle_run_cancel
     try:
         if command_type == "run.start":
             await handle_run_start_func(run_id, payload)
-        elif command_type == "run.cancel":
-            await handle_run_cancel_func(run_id, payload)
-        elif command_type == "run.resume":
-            await handle_run_resume_func(run_id, payload)
         else:
             logger.warning(f"[WORKER] Unknown command type: {command_type}")
     except Exception as e:
@@ -63,22 +59,6 @@ async def handle_run_start(run_id: str, payload: dict, create_run_func, get_chec
         
     except Exception as e:
         logger.error(f"[WORKER] Run for run {run_id} failed: {e}")
-
-
-async def handle_run_cancel(run_id: str, payload: dict) -> None:
-    """Handle run cancel command"""
-    logger.info(f"[WORKER] Cancelling run for run {run_id}")
-    
-    # In production, this would update the run state and notify the workflow
-    # For now, this is a placeholder
-
-
-async def handle_run_resume(run_id: str, payload: dict) -> None:
-    """Handle run resume command (for approval)"""
-    logger.info(f"[WORKER] Resuming run for run {run_id}")
-    
-    # In production, this would resume the workflow from checkpoint
-    # For now, this is a placeholder
 
 
 async def publish_final_answer(run_id: str, content: str, nats_client) -> None:
@@ -159,7 +139,7 @@ async def publish_worker_ready(run_id: str, nats_client) -> None:
         "schema_version": "1.0",
     }
     
-    subject = f"agent.chat.{run_id}.worker.ready"
+    subject = f"agent.control.container.ready"
     try:
         await nats_client.nc.publish(subject, json.dumps(message).encode())
         logger.info(f"[WORKER] Published worker ready signal for run {run_id}")

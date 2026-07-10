@@ -13,6 +13,9 @@ class RequestContext:
     repository_id: str | None = None
     mock_mode: bool = False
     llm_provider: str = "ollama"
+    model_name: str = "qwen3.5:9b"
+    agent_type: str = "specialist"
+    api_key: str = ""
 
 
 def _env_mock_mode() -> bool:

@@ -13,7 +13,7 @@ from message_fixtures import (
 async def test_publish_state_events(nats_test_client, sample_run_id):
     """Test publishing state events to NATS"""
     # Publish run.start command
-    command_subject = f"agent.chat.{sample_run_id}.user.events"
+    command_subject = f"agent.chat.{sample_run_id}.start"
     command_message = run_start_fixture(
         run_id=sample_run_id,
         user_id="test-user-123",
@@ -34,7 +34,7 @@ async def test_publish_state_events(nats_test_client, sample_run_id):
 @pytest.mark.integration
 async def test_publish_final_answer(nats_test_client, sample_run_id):
     """Test publishing final answer event to NATS"""
-    subject = f"agent.chat.{sample_run_id}.user.events"
+    subject = f"agent.chat.{sample_run_id}.start"
     message = final_answer_fixture(run_id=sample_run_id, content="Test final answer")
     await nats_test_client.publish(subject, message)
     
@@ -45,7 +45,7 @@ async def test_publish_final_answer(nats_test_client, sample_run_id):
 @pytest.mark.integration
 async def test_publish_progress_update(nats_test_client, sample_run_id):
     """Test publishing progress update event to NATS"""
-    subject = f"agent.chat.{sample_run_id}.user.events"
+    subject = f"agent.chat.{sample_run_id}.start"
     message = progress_update_fixture(run_id=sample_run_id, content="Test progress")
     await nats_test_client.publish(subject, message)
     
@@ -57,7 +57,7 @@ async def test_publish_progress_update(nats_test_client, sample_run_id):
 async def test_publish_full_workflow_flow(nats_test_client, sample_run_id):
     """Test publishing full workflow flow: run.start → state events → final answer"""
     # Publish run.start command
-    command_subject = f"agent.chat.{sample_run_id}.user.events"
+    command_subject = f"agent.chat.{sample_run_id}.start"
     command_message = run_start_fixture(
         run_id=sample_run_id,
         user_id="test-user-123",

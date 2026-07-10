@@ -14,10 +14,20 @@ export class HttpClientService {
 
   private getHeaders(): HttpHeaders {
     const token = localStorage.getItem('jwt_token');
-    return new HttpHeaders({
+    const userStr = localStorage.getItem('user');
+    const user = userStr ? JSON.parse(userStr) : null;
+    
+    const headers = new HttpHeaders({
       'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {})
     });
+
+    // Add X-User-Subject header for agent-service requests
+    if (user?.id) {
+      return headers.set('X-User-Subject', user.id);
+    }
+
+    return headers;
   }
 
   get<T>(url: string, useAgentApi = false): Observable<T> {

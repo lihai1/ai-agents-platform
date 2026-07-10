@@ -48,7 +48,8 @@ services:
       DOCKER_SOCKET_PATH: "/var/run/docker.sock"
       DISABLE_AUTH: "true"
       MOCK_MODE: "false"
-      LLM_PROVIDER: "fake"
+      LLM_PROVIDER: "ollama"
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
     ports:
       - "8080:8080"
     volumes:

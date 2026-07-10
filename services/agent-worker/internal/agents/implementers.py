@@ -6,6 +6,7 @@ from langchain_core.tools import tool
 from internal.agents.schemas import ImplementationResult
 from internal.agents.model_factory import get_model
 from internal.tools.workspace import WorkspaceTools
+from internal.tools.web_search import WebSearchTool
 import json
 import logging
 
@@ -84,6 +85,9 @@ class GoDeveloperAgent:
         if run_id and not workspace_tools.run_id:
             workspace_tools.run_id = run_id
         
+        # Initialize web search tool
+        web_search = WebSearchTool()
+        
         prompt = ChatPromptTemplate.from_messages([
             ("system", """You are a Go developer agent. Your job is to implement the requested changes in a Go repository.
 
@@ -93,7 +97,8 @@ Follow these guidelines:
 - Write clean, readable code with proper error handling
 - Add appropriate tests
 - Follow the implementation plan provided
-- Only modify files that are in the implementation plan"""),
+- Only modify files that are in the implementation plan
+- You can search the web for Go documentation, best practices, and examples"""),
             ("human", """Task: {task}
 
 Implementation Plan:
@@ -137,7 +142,32 @@ Implement the changes. Return a structured result with:
             result = await workspace_tools.git_diff(workspace_id)
             return json.dumps(result)
         
-        tools = [write_file, read_file, git_status, git_diff]
+        @tool
+        async def search_web(query: str, max_results: int = 5) -> str:
+            """Search the web for information"""
+            result = await web_search.search(query, max_results)
+            return json.dumps(result)
+        
+        @tool
+        async def fetch_url(url: str) -> str:
+            """Fetch and parse content from a specific URL"""
+            result = await web_search.search_url(url)
+            return json.dumps(result)
+        
+        @tool
+        async def browse_page(url: str, wait_for_selector: str = None, timeout: int = 10000) -> str:
+            """Open a headless browser and read the page content"""
+            result = await web_search.browse_page(url, wait_for_selector, timeout)
+            return json.dumps(result)
+        
+        @tool
+        async def run_command(command: str, args: str = None, timeout: int = 30) -> str:
+            """Run a shell command in the workspace"""
+            args_list = json.loads(args) if args else None
+            result = await workspace_tools.run_command(workspace_id, command, args_list, timeout)
+            return json.dumps(result)
+        
+        tools = [write_file, read_file, git_status, git_diff, search_web, fetch_url, browse_page, run_command]
         
         # Create agent
         agent = create_agent(self.model, tools, system_prompt=prompt)
@@ -189,6 +219,9 @@ class AngularDeveloperAgent:
         if run_id and not workspace_tools.run_id:
             workspace_tools.run_id = run_id
         
+        # Initialize web search tool
+        web_search = WebSearchTool()
+        
         prompt = ChatPromptTemplate.from_messages([
             ("system", """You are an Angular developer agent. Your job is to implement the requested changes in an Angular repository.
 
@@ -199,7 +232,8 @@ Follow these guidelines:
 - Write clean, readable TypeScript code
 - Add appropriate unit tests
 - Follow the implementation plan provided
-- Only modify files that are in the implementation plan"""),
+- Only modify files that are in the implementation plan
+- You can search the web for Angular documentation, best practices, and examples"""),
             ("human", """Task: {task}
 
 Implementation Plan:
@@ -243,7 +277,32 @@ Implement the changes. Return a structured result with:
             result = await workspace_tools.git_diff(workspace_id)
             return json.dumps(result)
         
-        tools = [write_file, read_file, git_status, git_diff]
+        @tool
+        async def search_web(query: str, max_results: int = 5) -> str:
+            """Search the web for information"""
+            result = await web_search.search(query, max_results)
+            return json.dumps(result)
+        
+        @tool
+        async def fetch_url(url: str) -> str:
+            """Fetch and parse content from a specific URL"""
+            result = await web_search.search_url(url)
+            return json.dumps(result)
+        
+        @tool
+        async def browse_page(url: str, wait_for_selector: str = None, timeout: int = 10000) -> str:
+            """Open a headless browser and read the page content"""
+            result = await web_search.browse_page(url, wait_for_selector, timeout)
+            return json.dumps(result)
+        
+        @tool
+        async def run_command(command: str, args: str = None, timeout: int = 30) -> str:
+            """Run a shell command in the workspace"""
+            args_list = json.loads(args) if args else None
+            result = await workspace_tools.run_command(workspace_id, command, args_list, timeout)
+            return json.dumps(result)
+        
+        tools = [write_file, read_file, git_status, git_diff, search_web, fetch_url, browse_page, run_command]
         
         # Create agent
         agent = create_agent(self.model, tools, system_prompt=prompt)
@@ -293,6 +352,9 @@ class AngularUIDeveloperAgent:
         if run_id and not workspace_tools.run_id:
             workspace_tools.run_id = run_id
         
+        # Initialize web search tool
+        web_search = WebSearchTool()
+        
         prompt = ChatPromptTemplate.from_messages([
             ("system", """You are an Angular UI developer agent. Your job is to implement UI/UX changes in an Angular repository.
 
@@ -302,7 +364,8 @@ Follow these guidelines:
 - Ensure responsive design
 - Follow accessibility best practices (ARIA labels, keyboard navigation)
 - Use Angular Material or similar component library when appropriate
-- Follow the implementation plan provided"""),
+- Follow the implementation plan provided
+- You can search the web for CSS/HTML best practices, design patterns, and examples"""),
             ("human", """Task: {task}
 
 Implementation Plan:
@@ -346,7 +409,32 @@ Implement the UI changes. Return a structured result with:
             result = await workspace_tools.git_diff(workspace_id)
             return json.dumps(result)
         
-        tools = [write_file, read_file, git_status, git_diff]
+        @tool
+        async def search_web(query: str, max_results: int = 5) -> str:
+            """Search the web for information"""
+            result = await web_search.search(query, max_results)
+            return json.dumps(result)
+        
+        @tool
+        async def fetch_url(url: str) -> str:
+            """Fetch and parse content from a specific URL"""
+            result = await web_search.search_url(url)
+            return json.dumps(result)
+        
+        @tool
+        async def browse_page(url: str, wait_for_selector: str = None, timeout: int = 10000) -> str:
+            """Open a headless browser and read the page content"""
+            result = await web_search.browse_page(url, wait_for_selector, timeout)
+            return json.dumps(result)
+        
+        @tool
+        async def run_command(command: str, args: str = None, timeout: int = 30) -> str:
+            """Run a shell command in the workspace"""
+            args_list = json.loads(args) if args else None
+            result = await workspace_tools.run_command(workspace_id, command, args_list, timeout)
+            return json.dumps(result)
+        
+        tools = [write_file, read_file, git_status, git_diff, search_web, fetch_url, browse_page, run_command]
         
         # Create agent
         agent = create_agent(self.model, tools, system_prompt=prompt)
@@ -396,6 +484,9 @@ class DevOpsDeveloperAgent:
         if run_id and not workspace_tools.run_id:
             workspace_tools.run_id = run_id
         
+        # Initialize web search tool
+        web_search = WebSearchTool()
+        
         prompt = ChatPromptTemplate.from_messages([
             ("system", """You are a DevOps developer agent. Your job is to implement infrastructure and deployment changes.
 
@@ -404,7 +495,8 @@ Follow these guidelines:
 - Update CI/CD pipelines (GitHub Actions, GitLab CI, etc.)
 - Follow infrastructure as code best practices
 - Ensure security best practices (non-root containers, minimal base images)
-- Follow the implementation plan provided"""),
+- Follow the implementation plan provided
+- You can search the web for DevOps best practices, documentation, and examples"""),
             ("human", """Task: {task}
 
 Implementation Plan:
@@ -448,7 +540,32 @@ Implement the DevOps changes. Return a structured result with:
             result = await workspace_tools.git_diff(workspace_id)
             return json.dumps(result)
         
-        tools = [write_file, read_file, git_status, git_diff]
+        @tool
+        async def search_web(query: str, max_results: int = 5) -> str:
+            """Search the web for information"""
+            result = await web_search.search(query, max_results)
+            return json.dumps(result)
+        
+        @tool
+        async def fetch_url(url: str) -> str:
+            """Fetch and parse content from a specific URL"""
+            result = await web_search.search_url(url)
+            return json.dumps(result)
+        
+        @tool
+        async def browse_page(url: str, wait_for_selector: str = None, timeout: int = 10000) -> str:
+            """Open a headless browser and read the page content"""
+            result = await web_search.browse_page(url, wait_for_selector, timeout)
+            return json.dumps(result)
+        
+        @tool
+        async def run_command(command: str, args: str = None, timeout: int = 30) -> str:
+            """Run a shell command in the workspace"""
+            args_list = json.loads(args) if args else None
+            result = await workspace_tools.run_command(workspace_id, command, args_list, timeout)
+            return json.dumps(result)
+        
+        tools = [write_file, read_file, git_status, git_diff, search_web, fetch_url, browse_page, run_command]
         
         # Create agent
         agent = create_agent(self.model, tools, system_prompt=prompt)

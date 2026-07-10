@@ -63,6 +63,9 @@ async def chatkit_endpoint(request: Request):
         repository_id=ui_request.get("repository_id"),
         mock_mode=bool(ui_request.get("mock_mode", False)),
         llm_provider=ui_request.get("llm_provider", base_context.llm_provider),
+        model_name=ui_request.get("model_name", base_context.model_name),
+        agent_type=ui_request.get("agent_type", base_context.agent_type),
+        api_key=ui_request.get("api_key", base_context.api_key),
     )
     
     print(f"ChatKit endpoint called, body: {body}")

@@ -111,6 +111,9 @@ class AegisChatKitServer(ChatKitServer[RequestContext]):
                 "repository_id": context.repository_id,
                 "mock_mode": context.mock_mode,
                 "llm_provider": context.llm_provider,
+                "model_name": context.model_name,
+                "agent_type": context.agent_type,
+                "api_key": context.api_key,
             },
         )
 
@@ -197,8 +200,12 @@ class AegisChatKitServer(ChatKitServer[RequestContext]):
                 break
 
             print("YIELDING progress update")
-            event = progress_from_event(event)
-            yield self._event_to_sse(event)
+            progress_event = progress_from_event(event)
+            # Skip events with empty text to avoid duplicate empty messages in UI
+            if progress_event.text:
+                yield self._event_to_sse(progress_event)
+            else:
+                print(f"ignoring progress update: {event}")
 
     def _event_to_sse(self, event: ThreadStreamEvent) -> str:
         """Convert a ChatKit event to SSE format"""

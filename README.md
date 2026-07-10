@@ -33,11 +33,37 @@ The implementation showcases SWE-1.6's ability to reason about complex distribut
 - Go 1.23+ (for local development)
 - Node.js 22+ (for local development)
 - Python 3.12+ (for local development)
+- Ollama (optional, for real LLM support)
 
-### Using Docker Compose
+### Using the Makefile
+
+The root Makefile provides convenient targets for managing the deployment:
 
 ```bash
+# Start all services with real LLM (Ollama)
+make clean-start
+
+# Start all services with mock LLM (for testing)
+make mock-llm-start
+
+# Stop all services
+make compose-down
+
+# Build containers manually
+make build-containers
+
+# Start services (without clean)
+make compose-up
+```
+
+### Using Docker Compose Directly
+
+```bash
+# Start with real LLM (Ollama)
 docker-compose up -d
+
+# Start with mock LLM
+LLM_PROVIDER=fake docker-compose up -d
 ```
 
 This will start:
@@ -46,7 +72,20 @@ This will start:
 - Agent Service on port 8000
 - Web UI on port 4200
 - NATS on port 4222
-- Mock Agent Worker (for first-flow E2E testing)
+
+### LLM Provider Configuration
+
+The platform supports two LLM modes:
+
+1. **Real LLM (Ollama)**: Default mode using local Ollama instance
+   - Requires Ollama running locally: `ollama serve`
+   - Worker containers connect to `http://host.docker.internal:11434`
+   - Select Ollama models in the UI chat configuration
+
+2. **Mock LLM (Fake)**: Testing mode with simulated responses
+   - No external dependencies
+   - Faster for testing workflows
+   - Use `make mock-llm-start` or `LLM_PROVIDER=fake docker-compose up -d`
 
 ### Local Development
 
@@ -215,29 +254,43 @@ ai-platform-swe-1.6-gen/
 10. ✅ Phase 10: NATS Worker Separation
 11. ✅ Phase 11: Hardening and Evaluation
 12. ✅ Phase 12: Agent Container Creation Flow
-
+13. ✅ Phase 13: Architecture Refactoring - Service Separation
 
 See [PROGRESS.md](PROGRESS.md) for detailed implementation status.
 
 ## Agent Container Creation Flow
 
-The platform now supports complete end-to-end agent container creation. The **first-flow** implementation uses the `mock-worker` container to validate the full message path without requiring real LLM calls or Docker container creation:
+The platform now supports complete end-to-end agent container creation with a simplified control flow:
 
 1. **User Chat Message** → Agent Service receives chat request via `POST /chatkit/`
 2. **SSE Stream Initiated** → `AegisChatKitServer.respond()` returns an SSE stream
-3. **Container Creation** → Agent Service publishes `chat.start` to NATS
-4. **Control Plane** → Receives `chat.start`, attempts container creation (or skips in mock mode)
-5. **Mock Agent Worker** → Container `mock-worker` subscribes to `agent.events.{run_id}.>` and publishes `started`, `progress`, and `completed` events
-6. **State Events** → Agent Service receives events via `NatsBridge` and yields them as ChatKit `progress_update` and `thread.item.done` SSE events
-7. **UI Rendering** → Angular `chat.component.ts` parses SSE events and updates the chat UI
+3. **Container Creation** → Agent Service publishes `agent.control.{run_id}.start` to NATS with all run parameters
+4. **Control Plane** → Receives `agent.control.{run_id}.start`, creates container with environment variables
+5. **Worker Auto-Start** → Container starts, worker reads run parameters from environment and auto-starts workflow
+6. **State Events** → Worker publishes state events to `agent.events.{run_id}.{event_type}`
+7. **Event Streaming** → Agent Service receives events via global event stream and yields as ChatKit SSE events
+8. **UI Rendering** → Angular `chat.component.ts` parses SSE events and updates the chat UI
 
-### First-Flow with mock-worker
+### Control Signals
 
-For the initial E2E smoke test, the `mock-worker` container simulates a real agent worker:
+All control signals use the unified `agent.control.*` pattern:
+- `agent.control.{run_id}.start` - Start run with all parameters (user_id, task, project_id, etc.)
+- `agent.control.{run_id}.cancel` - Cancel run (stop & remove container)
+- `agent.control.{run_id}.resume` - Resume run (recreate container)
 
-- Listens on the `chat.start` NATS subject
-- Publishes a deterministic sequence of events (`started`, `progress`, `completed`)
-- Allows the ChatKit streaming path to be verified without requiring GPU/LLM access or real Docker containers
+### Worker Auto-Start
+
+The worker no longer listens to NATS commands. Instead:
+- Worker reads run parameters from environment variables (USER_ID, TASK, PROJECT_ID, etc.)
+- Worker auto-starts the workflow immediately on container startup
+- This eliminates the need for a separate `run.start` command
+
+### Event Streaming
+
+Worker publishes state events to:
+- `agent.events.{run_id}.{event_type}` - State transition events
+
+Agent Service subscribes to global event stream and forwards to UI via SSE.
 
 ### Current Limitations
 
@@ -247,6 +300,36 @@ For the initial E2E smoke test, the `mock-worker` container simulates a real age
 - **Icon Validation**: Fixed invalid `loader` icon literal by mapping it to `agent`
 
 These limitations are acceptable for testing the message flow and can be addressed in future iterations.
+
+## Phase 13: Architecture Refactoring - Service Separation
+
+In Phase 13, the architecture was refactored to properly separate concerns between the agent-service and agent-worker:
+
+### Key Changes
+
+- **Removed LangGraph workflow execution code from agent-service**: All workflow execution logic (graph, nodes, router, state, checkpointer, approvals) was moved to agent-worker
+- **agent-service now handles**: HTTP API, NATS messaging, SSE streaming, PostgreSQL store
+- **agent-worker now handles**: LangGraph workflow execution, real agent implementations, workspace operations
+- **Shared library**: `internal/agents/` remains a shared library used by both services for specialist agents
+- **Event streaming infrastructure**: Moved `event_streams.py` from `internal/workflow/` to `internal/event_streams.py` for clarity
+
+### Architecture Benefits
+
+- **Clear separation of concerns**: API layer (agent-service) is completely separate from execution layer (agent-worker)
+- **Scalability**: Worker processes can be scaled independently of the API service
+- **Maintainability**: Workflow execution code is isolated to the worker service
+- **Testing**: Each service can be tested independently
+
+### Message Flow
+
+1. **User Chat Message** → Agent Service receives chat request via `POST /chatkit/`
+2. **SSE Stream Initiated** → `AegisChatKitServer.respond()` returns an SSE stream
+3. **Container Creation** → Agent Service publishes `agent.control.{run_id}.start` to NATS with all run parameters
+4. **Control Plane** → Receives `agent.control.{run_id}.start`, creates container with environment variables
+5. **Worker Auto-Start** → Container starts, worker reads run parameters from environment and auto-starts workflow
+6. **State Events** → Worker publishes state events to `agent.events.{run_id}.{event_type}`
+7. **Event Streaming** → Agent Service receives events via global event stream and yields as ChatKit SSE events
+8. **UI Rendering** → Angular `chat.component.ts` parses SSE events and updates the chat UI
 
 ## Architecture Diagrams
 

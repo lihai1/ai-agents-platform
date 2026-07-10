@@ -10,7 +10,7 @@ func TestContainerLifecyclePublishStart(t *testing.T) {
 	nc := getNATSConnection(t)
 	defer nc.Close()
 
-	subject := "agent.chat.test-run-123.run.start"
+	subject := "agent.chat.test-run-123.start"
 
 	// Publish agent start message
 	message := map[string]interface{}{
@@ -44,7 +44,7 @@ func TestContainerLifecyclePublishCancel(t *testing.T) {
 	nc := getNATSConnection(t)
 	defer nc.Close()
 
-	subject := "agent.chat.test-run-123.run.cancel"
+	subject := "agent.chat.test-run-123.cancel"
 
 	// Publish cancel message
 	message := map[string]interface{}{
@@ -74,8 +74,8 @@ func TestContainerLifecycleFullFlow(t *testing.T) {
 	defer nc.Close()
 
 	runID := "test-run-lifecycle-123"
-	startSubject := "agent.chat." + runID + ".run.start"
-	cancelSubject := "agent.chat." + runID + ".run.cancel"
+	startSubject := "agent.chat." + runID + ".start"
+	cancelSubject := "agent.chat." + runID + ".cancel"
 
 	// Publish start message
 	startMessage := map[string]interface{}{

@@ -67,7 +67,7 @@ async def test_single_agent_nats_flow(
             await asyncio.sleep(1)
             
             # Subscribe to worker ready signal
-            ready_gen = nats_test_client.subscribe(f"agent.chat.{run_id}.worker.ready")
+            ready_gen = nats_test_client.subscribe(f"agent.control.container.ready")
             try:
                 ready_msg = await asyncio.wait_for(anext(ready_gen), timeout=10)
                 assert ready_msg.get("status") == "ready", "Worker did not publish ready signal"
@@ -104,7 +104,7 @@ async def test_single_agent_nats_flow(
             )
             command["payload"]["llm_provider"] = "fake"
             command["payload"]["mock_mode"] = False
-            await nats_test_client.publish(f"agent.chat.{run_id}.user.events", command)
+            await nats_test_client.publish(f"agent.chat.{run_id}.start", command)
             
             # Collect events until workflow completes or timeout
             try:
@@ -198,7 +198,7 @@ async def test_single_agent_progress_updates(
             await asyncio.sleep(1)
             
             # Wait for worker ready
-            ready_gen = nats_test_client.subscribe(f"agent.chat.{run_id}.worker.ready")
+            ready_gen = nats_test_client.subscribe(f"agent.control.container.ready")
             try:
                 ready_msg = await asyncio.wait_for(anext(ready_gen), timeout=10)
                 assert ready_msg.get("status") == "ready"
@@ -224,7 +224,7 @@ async def test_single_agent_progress_updates(
                 task="Test task for progress updates",
             )
             command["payload"]["llm_provider"] = "fake"
-            await nats_test_client.publish(f"agent.chat.{run_id}.user.events", command)
+            await nats_test_client.publish(f"agent.chat.{run_id}.start", command)
             
             # Collect events
             try:

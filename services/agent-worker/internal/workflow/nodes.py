@@ -8,8 +8,6 @@ from internal.workflow.approvals import request_approval
 from internal.messaging.nats import get_nats_client
 from internal.tools.workspace import WorkspaceTools
 from internal.agents.specialists import SkillsLeadAgent, SolutionPlannerAgent, RepoScoutAgent
-from internal.agents.implementers import GoDeveloperAgent, AngularDeveloperAgent, AngularUIDeveloperAgent, DevOpsDeveloperAgent
-from internal.agents.single_agent import SingleAgent
 from internal.agents.validators import BackendTestEngineerAgent, AngularTestEngineerAgent, CodeReviewerAgent, CompletionVerifierAgent
 import uuid
 import os
@@ -55,20 +53,10 @@ async def publish_chat_event(run_id: str, event_type: str, payload: dict = None)
         if nats.js is None:
             await nats.connect()
 
-        message = {
-            "message_id": str(uuid.uuid4()),
-            "event_type": event_type,
-            "run_id": run_id,
-            "payload": payload or {},
-            "timestamp": datetime.utcnow().isoformat(),
-            "schema_version": "1.0",
-        }
-
-        subject = f"agent.chat.{run_id}.events"
-        await nats.js.publish(
-            subject=subject,
-            payload=json.dumps(message).encode(),
-            headers={"run_id": run_id},
+        await nats.publish_chat_event(
+            event_type=event_type,
+            run_id=run_id,
+            payload=payload or {}
         )
         logger.info(f"Published chat event: {event_type} for run {run_id}")
     except Exception as e:
@@ -117,7 +105,6 @@ async def scouting_node(state: EngineeringState) -> EngineeringState:
     state["status"] = "SCOUTING"
     state["current_phase"] = "SCOUTING"
     await publish_state_event(state["run_id"], "scouting", {"status": "SCOUTING"})
-    await publish_chat_event(state["run_id"], "progress_update", {"content": "Scouting repository..."})
 
     mock_mode = state.get("mock_mode", False)
     llm_provider = state.get("llm_provider")
@@ -152,7 +139,6 @@ async def planning_node(state: EngineeringState) -> EngineeringState:
     state["status"] = "PLANNING"
     state["current_phase"] = "PLANNING"
     await publish_state_event(state["run_id"], "planning", {"status": "PLANNING"})
-    await publish_chat_event(state["run_id"], "progress_update", {"content": "Planning implementation..."})
 
     mock_mode = state.get("mock_mode", False)
     llm_provider = state.get("llm_provider")
@@ -200,7 +186,6 @@ async def designing_node(state: EngineeringState) -> EngineeringState:
     state["status"] = "DESIGNING"
     state["current_phase"] = "DESIGNING"
     await publish_state_event(state["run_id"], "designing", {"status": "DESIGNING"})
-    await publish_chat_event(state["run_id"], "progress_update", {"content": "Designing solution..."})
 
     repository_summary = state.get("repository_summary") or {}
     implementation_plan = state.get("implementation_plan") or {}
@@ -213,134 +198,11 @@ async def designing_node(state: EngineeringState) -> EngineeringState:
     return state
 
 
-async def implementing_node(state: EngineeringState) -> EngineeringState:
-    """Implement changes - run real implementation agents"""
-    state["status"] = "IMPLEMENTING"
-    state["current_phase"] = "IMPLEMENTING"
-    await publish_state_event(state["run_id"], "implementing", {"status": "IMPLEMENTING"})
-    await publish_chat_event(state["run_id"], "progress_update", {"content": "Implementing changes..."})
-
-    mock_mode = state.get("mock_mode", False)
-    llm_provider = state.get("llm_provider")
-    task = state.get("task", "")
-    implementation_plan = state.get("implementation_plan") or {}
-    repository_summary = state.get("repository_summary") or {}
-    selected_agents = state.get("selected_agents") or []
-    workspace_id = state.get("workspace_id") or "/workspace"
-    workspace_tools = _workspace_tools(state)
-
-    # Check if running in single-agent mode
-    agent_type = os.environ.get("AGENT_TYPE", "")
-    is_single_agent = agent_type == "single-agent"
-
-    results = []
-
-    try:
-        if is_single_agent:
-            # Use single agent for all tasks
-            logger.info("Using single-agent mode for implementation")
-            agent = SingleAgent(mock_mode=mock_mode, llm_provider=llm_provider or "ollama")
-            result = await agent.implement(
-                task=task,
-                implementation_plan=implementation_plan,
-                repository_summary=repository_summary,
-                workspace_id=workspace_id,
-                workspace_tools=workspace_tools,
-                run_id=state["run_id"],
-            )
-            results.append(_pydantic_to_dict(result))
-        else:
-            # Multi-agent mode - use specialist agents
-            for agent_name in selected_agents:
-                agent = None
-                if agent_name in ("go-developer", "backend-developer", "developer"):
-                    agent = GoDeveloperAgent(mock_mode=mock_mode, llm_provider=llm_provider)
-                elif agent_name == "angular-developer":
-                    agent = AngularDeveloperAgent(mock_mode=mock_mode, llm_provider=llm_provider)
-                elif agent_name == "angular-ui-developer":
-                    agent = AngularUIDeveloperAgent(mock_mode=mock_mode, llm_provider=llm_provider)
-                elif agent_name == "devops-developer":
-                    agent = DevOpsDeveloperAgent(mock_mode=mock_mode, llm_provider=llm_provider)
-
-                if agent is None:
-                    logger.warning(f"Unknown implementation agent: {agent_name}, skipping")
-                    continue
-
-                result = await agent.implement(
-                    task=task,
-                    implementation_plan=implementation_plan,
-                    repository_summary=repository_summary,
-                    workspace_id=workspace_id,
-                    workspace_tools=workspace_tools,
-                    run_id=state["run_id"],
-                )
-                results.append(_pydantic_to_dict(result))
-
-        # Aggregate results
-        if results:
-            success = all(r.get("success", False) for r in results)
-            files_modified = []
-            files_created = []
-            lines_added = 0
-            lines_removed = 0
-            errors = []
-            warnings = []
-            for r in results:
-                files_modified.extend(r.get("files_modified", []) or [])
-                files_created.extend(r.get("files_created", []) or [])
-                lines_added += r.get("lines_added", 0) or 0
-                lines_removed += r.get("lines_removed", 0) or 0
-                errors.extend(r.get("errors", []) or [])
-                warnings.extend(r.get("warnings", []) or [])
-
-            state["implementation_results"] = {
-                "files_modified": files_modified,
-                "files_created": files_created,
-                "lines_added": lines_added,
-                "lines_removed": lines_removed,
-                "success": success,
-                "errors": errors,
-                "warnings": warnings,
-            }
-        else:
-            state["implementation_results"] = {
-                "files_modified": [],
-                "files_created": [],
-                "lines_added": 0,
-                "lines_removed": 0,
-                "success": False,
-                "errors": ["No implementation agents were selected"],
-                "warnings": [],
-            }
-    except Exception as e:
-        logger.error(f"Implementation failed: {e}")
-        state["implementation_results"] = {
-            "files_modified": [],
-            "files_created": [],
-            "lines_added": 0,
-            "lines_removed": 0,
-            "success": False,
-            "errors": [str(e)],
-            "warnings": [],
-        }
-
-    # Capture diff for review
-    try:
-        diff = await workspace_tools.git_diff(workspace_id)
-        state["code_diff"] = diff.get("diff", diff.get("output", ""))
-    except Exception as e:
-        logger.error(f"Failed to capture diff: {e}")
-        state["code_diff"] = ""
-
-    return state
-
-
 async def testing_node(state: EngineeringState) -> EngineeringState:
     """Run tests - execute real test engineer agents"""
     state["status"] = "TESTING"
     state["current_phase"] = "TESTING"
     await publish_state_event(state["run_id"], "testing", {"status": "TESTING"})
-    await publish_chat_event(state["run_id"], "progress_update", {"content": "Running tests..."})
 
     mock_mode = state.get("mock_mode", False)
     llm_provider = state.get("llm_provider")
@@ -385,7 +247,6 @@ async def reviewing_node(state: EngineeringState) -> EngineeringState:
     state["status"] = "REVIEWING"
     state["current_phase"] = "REVIEWING"
     await publish_state_event(state["run_id"], "reviewing", {"status": "REVIEWING"})
-    await publish_chat_event(state["run_id"], "progress_update", {"content": "Reviewing code..."})
 
     mock_mode = state.get("mock_mode", False)
     llm_provider = state.get("llm_provider")
@@ -422,7 +283,6 @@ async def verifying_node(state: EngineeringState) -> EngineeringState:
     state["status"] = "VERIFYING"
     state["current_phase"] = "VERIFYING"
     await publish_state_event(state["run_id"], "verifying", {"status": "VERIFYING"})
-    await publish_chat_event(state["run_id"], "progress_update", {"content": "Verifying completion..."})
 
     mock_mode = state.get("mock_mode", False)
     llm_provider = state.get("llm_provider")
@@ -462,7 +322,6 @@ async def repairing_node(state: EngineeringState) -> EngineeringState:
     state["current_phase"] = "REPAIRING"
     state["repair_count"] = state.get("repair_count", 0) + 1
     await publish_state_event(state["run_id"], "repairing", {"status": "REPAIRING", "repair_count": state["repair_count"]})
-    await publish_chat_event(state["run_id"], "progress_update", {"content": f"Repairing issues (attempt {state['repair_count']})..."})
     await asyncio.sleep(0.4)
     return state
 
@@ -471,7 +330,7 @@ async def waiting_approval_node(state: EngineeringState) -> EngineeringState:
     """Wait for human approval - use LangGraph interrupt"""
     state["status"] = "WAITING_APPROVAL"
     state["current_phase"] = "WAITING_APPROVAL"
-    await publish_chat_event(state["run_id"], "progress_update", {"content": "Waiting for human approval..."})
+    await publish_state_event(state["run_id"], "waiting_approval", {"status": "WAITING_APPROVAL"})
 
     # In production, this would use request_approval() to interrupt the workflow
     await asyncio.sleep(0.1)
@@ -485,8 +344,6 @@ async def completed_node(state: EngineeringState) -> EngineeringState:
     state["status"] = "COMPLETED"
     state["current_phase"] = "COMPLETED"
     await publish_state_event(state["run_id"], "completed", {"status": "COMPLETED"})
-    await publish_chat_event(state["run_id"], "progress_update", {"content": "Run completed successfully"})
-    await publish_chat_event(state["run_id"], "final_answer", {"content": "Implementation completed successfully."})
     return state
 
 
@@ -497,9 +354,7 @@ async def failed_node(state: EngineeringState) -> EngineeringState:
     state["current_phase"] = "FAILED"
     error_message = state.get("error_message") or "Verification failed after repair limit"
     state["error_message"] = error_message
-    await publish_state_event(state["run_id"], "failed", {"status": "FAILED", "error_message": error_message})
-    await publish_chat_event(state["run_id"], "progress_update", {"content": f"Run failed: {error_message}"})
-    await publish_chat_event(state["run_id"], "final_answer", {"content": f"Run failed: {error_message}"})
+    await publish_state_event(state["run_id"], "failed", {"error_message": error_message})
     return state
 
 
@@ -509,8 +364,7 @@ async def cancelled_node(state: EngineeringState) -> EngineeringState:
     state["status"] = "CANCELLED"
     state["current_phase"] = "CANCELLED"
     state["error_message"] = "Run cancelled by user"
-    await publish_state_event(state["run_id"], "cancelled", {"status": "CANCELLED"})
-    await publish_chat_event(state["run_id"], "final_answer", {"content": "Run cancelled by user"})
+    await publish_state_event(state["run_id"], "cancelled", {"error_message": "Run cancelled by user"})
     return state
 
 
@@ -520,6 +374,5 @@ async def budget_exceeded_node(state: EngineeringState) -> EngineeringState:
     state["status"] = "BUDGET_EXCEEDED"
     state["current_phase"] = "BUDGET_EXCEEDED"
     state["error_message"] = "Budget limit exceeded"
-    await publish_state_event(state["run_id"], "budget_exceeded", {"status": "BUDGET_EXCEEDED"})
-    await publish_chat_event(state["run_id"], "final_answer", {"content": "Budget limit exceeded"})
+    await publish_state_event(state["run_id"], "budget_exceeded", {"error_message": "Budget limit exceeded"})
     return state

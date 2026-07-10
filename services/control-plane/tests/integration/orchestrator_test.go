@@ -10,7 +10,7 @@ func TestOrchestratorWorkerReady(t *testing.T) {
 	nc := getNATSConnection(t)
 	defer nc.Close()
 
-	subject := "agent.chat.test-run-123.worker.ready"
+	subject := "agent.control.container.ready"
 
 	// Publish worker ready message
 	message := map[string]interface{}{
@@ -38,7 +38,7 @@ func TestOrchestratorCommandReception(t *testing.T) {
 	nc := getNATSConnection(t)
 	defer nc.Close()
 
-	subject := "agent.chat.test-run-orch-456.run.start"
+	subject := "agent.chat.test-run-orch-456.start"
 
 	// Publish orchestrator command
 	message := map[string]interface{}{

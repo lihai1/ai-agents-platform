@@ -28,7 +28,7 @@ def describe_worker_ready_signal_from_control_plane():
             "schema_version": "1.0",
         }
         
-        subject = f"agent.chat.{chat_id}.worker.ready"
+        subject = f"agent.control.container.ready"
         
         # Publish the message
         await nats.nc.publish(subject, json.dumps(worker_ready_msg).encode())
@@ -60,7 +60,7 @@ def describe_agent_service_receives_worker_ready():
         
         # Simulate agent service subscribing to worker ready signal
         chat_id = "test-chat-123"
-        subject = f"agent.chat.{chat_id}.worker.ready"
+        subject = f"agent.control.container.ready"
         
         # Simulate receiving worker ready message
         worker_ready_msg = {

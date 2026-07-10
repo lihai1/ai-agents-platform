@@ -13,6 +13,7 @@ type Config struct {
 	DockerSocketPath    string
 	KubeconfigPath      string
 	KubernetesNamespace string
+	OllamaBaseURL       string
 }
 
 func Load() *Config {
@@ -25,6 +26,7 @@ func Load() *Config {
 		DockerSocketPath:    getEnv("DOCKER_SOCKET_PATH", "/var/run/docker.sock"),
 		KubeconfigPath:      getEnv("KUBECONFIG_PATH", ""),
 		KubernetesNamespace: getEnv("KUBERNETES_NAMESPACE", "default"),
+		OllamaBaseURL:       getEnv("OLLAMA_BASE_URL", "http://localhost:11434"),
 	}
 }
 

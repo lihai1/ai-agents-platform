@@ -8,6 +8,7 @@ import { ArtifactViewerComponent } from '../artifact-viewer/artifact-viewer.comp
 import { DiffViewerComponent } from '../diff-viewer/diff-viewer.component';
 import { ApprovalDialogComponent } from '../approval-dialog/approval-dialog.component';
 import { RunContextComponent } from '../run-context/run-context.component';
+import { ChatConfigComponent } from '../chat-config/chat-config.component';
 
 interface ChatMessage {
   role: 'user' | 'assistant';
@@ -17,9 +18,11 @@ interface ChatMessage {
 @Component({
   selector: 'app-chat',
   standalone: true,
-  imports: [CommonModule, FormsModule, ActivityComponent, ArtifactViewerComponent, DiffViewerComponent, ApprovalDialogComponent, RunContextComponent],
+  imports: [CommonModule, FormsModule, ActivityComponent, ArtifactViewerComponent, DiffViewerComponent, ApprovalDialogComponent, RunContextComponent, ChatConfigComponent],
   template: `
-    <div class="chat-container">
+    <app-chat-config *ngIf="showConfig" (configComplete)="onConfigComplete($event)"></app-chat-config>
+    
+    <div class="chat-container" *ngIf="!showConfig">
       <div class="chat-header">
         <h1>Agent Chat</h1>
         <div class="chat-controls">
@@ -27,21 +30,11 @@ interface ChatMessage {
             <input type="checkbox" [(ngModel)]="triggerWorkflow" />
             <span>Trigger Agent Workflow</span>
           </label>
-          <label class="workflow-toggle">
-            <input type="checkbox" [(ngModel)]="mockMode" />
-            <span>Mock Mode</span>
-          </label>
-          <label class="workflow-toggle">
-            <span>LLM Provider</span>
-            <select [(ngModel)]="llmProvider">
-              <option value="fake">Fake</option>
-              <option value="ollama">Ollama</option>
-              <option value="openai">OpenAI</option>
-              <option value="anthropic">Anthropic</option>
-            </select>
-          </label>
           <button class="btn btn-secondary" (click)="toggleActivityPanel()" [class.active]="showActivityPanel">
             Activity
+          </button>
+          <button class="btn btn-secondary" (click)="resetConfig()">
+            Reset Config
           </button>
         </div>
       </div>
@@ -272,7 +265,15 @@ interface ChatMessage {
       cursor: not-allowed;
     }
     
-    .btn-primary {
+    .api-key-input {
+    padding: 0.5rem;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    font-family: inherit;
+    width: 200px;
+  }
+  
+  .btn-primary {
       background: #667eea;
       color: white;
     }
@@ -284,6 +285,10 @@ export class ChatComponent implements OnInit, OnDestroy {
   triggerWorkflow = false;
   mockMode = false;
   llmProvider = 'fake';
+  modelName = '';
+  agentType = 'specialist'; // 'single-agent' or 'specialist'
+  apiKey = ''; // API key for non-Ollama providers
+  showConfig = false;
   
   showActivityPanel = false;
   currentRunId: string | null = null;
@@ -314,12 +319,18 @@ export class ChatComponent implements OnInit, OnDestroy {
   }
 
   ngOnInit(): void {
-    // Load threadId from localStorage if available
-    const savedThreadId = localStorage.getItem('chat_thread_id');
-    if (savedThreadId) {
-      this.threadId = savedThreadId;
-    }
-    this.loadThread();
+    // Load configuration from localStorage
+    this.loadConfig();
+    
+    console.log('ngOnInit - loaded config:', {
+      agentType: this.agentType,
+      llmProvider: this.llmProvider,
+      apiKey: this.apiKey ? '***' : 'none',
+      mockMode: this.mockMode
+    });
+    
+    // Always show config modal on page load to allow reconfiguration
+    this.showConfig = true;
   }
   
   ngOnDestroy(): void {
@@ -330,6 +341,60 @@ export class ChatComponent implements OnInit, OnDestroy {
   
   toggleActivityPanel(): void {
     this.showActivityPanel = !this.showActivityPanel;
+  }
+  
+  loadConfig(): void {
+    this.agentType = localStorage.getItem('chat_agent_type') || '';
+    this.llmProvider = localStorage.getItem('chat_llm_provider') || '';
+    this.modelName = localStorage.getItem('chat_model_name') || '';
+    this.apiKey = localStorage.getItem('chat_api_key') || '';
+    this.mockMode = localStorage.getItem('chat_mock_mode') === 'true';
+  }
+  
+  isConfigComplete(): boolean {
+    if (!this.agentType || !this.llmProvider) {
+      return false;
+    }
+    
+    // Check if API key is required for selected provider
+    if ((this.llmProvider === 'openai' || this.llmProvider === 'anthropic') && !this.apiKey) {
+      return false;
+    }
+    
+    return true;
+  }
+  
+  onConfigComplete(config: any): void {
+    console.log('Config completed:', config);
+    this.agentType = config.agentType;
+    this.llmProvider = config.llmProvider;
+    this.modelName = config.modelName;
+    this.apiKey = config.apiKey;
+    this.mockMode = config.mockMode;
+    this.showConfig = false;
+    
+    console.log('After config complete - agentType:', this.agentType, 'llmProvider:', this.llmProvider, 'modelName:', this.modelName, 'mockMode:', this.mockMode);
+    
+    // Load threadId from localStorage if available
+    const savedThreadId = localStorage.getItem('chat_thread_id');
+    if (savedThreadId) {
+      this.threadId = savedThreadId;
+    }
+    this.loadThread();
+  }
+  
+  resetConfig(): void {
+    localStorage.removeItem('chat_agent_type');
+    localStorage.removeItem('chat_llm_provider');
+    localStorage.removeItem('chat_model_name');
+    localStorage.removeItem('chat_api_key');
+    localStorage.removeItem('chat_mock_mode');
+    this.agentType = '';
+    this.llmProvider = '';
+    this.modelName = '';
+    this.apiKey = '';
+    this.mockMode = false;
+    this.showConfig = true;
   }
   
   handleEnter(event: Event): void {
@@ -343,20 +408,18 @@ export class ChatComponent implements OnInit, OnDestroy {
     const message = this.newMessage.trim();
     if (!message || this.isSending) return;
     
+    console.log('Sending message with config:', {
+      agentType: this.agentType,
+      llmProvider: this.llmProvider,
+      mockMode: this.mockMode,
+      apiKey: this.apiKey ? '***' : 'none'
+    });
+    
     this.newMessage = '';
     this.isSending = true;
     
     // Add user message immediately
     this.messages.push({ role: 'user', content: message });
-    
-    // Safety timeout to ensure button gets re-enabled
-    const safetyTimeout = setTimeout(() => {
-      if (this.isSending) {
-        console.warn('Message sending timeout - re-enabling button');
-        this.isSending = false;
-        this.cdr.detectChanges();
-      }
-    }, 30000); // 30 second timeout
     
     try {
       const token = localStorage.getItem('jwt_token');
@@ -373,7 +436,10 @@ export class ChatComponent implements OnInit, OnDestroy {
           project_id: this.projectId,
           repository_id: this.repositoryId,
           mock_mode: this.mockMode,
-          llm_provider: this.llmProvider
+          llm_provider: this.llmProvider,
+          model_name: this.modelName,
+          agent_type: this.agentType,
+          api_key: this.apiKey
         })
       });
       
@@ -432,8 +498,10 @@ export class ChatComponent implements OnInit, OnDestroy {
                     const lastMessage = this.messages[this.messages.length - 1];
                     if (lastMessage && lastMessage.role === 'assistant') {
                       this.messages[this.messages.length - 1] = { role: 'assistant', content: assistantMessage };
-                      this.cdr.detectChanges();
                     }
+                    // Re-enable button on completion
+                    this.isSending = false;
+                    this.cdr.detectChanges();
                   });
                 }
               } else if (data.content) {
@@ -467,6 +535,12 @@ export class ChatComponent implements OnInit, OnDestroy {
         }
       }
       
+      // Re-enable button if stream ended without thread.item.done
+      if (this.isSending) {
+        this.isSending = false;
+        this.cdr.detectChanges();
+      }
+      
       // Start event stream if workflow was triggered
       if (workflowTriggered && this.threadId) {
         this.handleRunStarted(this.threadId);
@@ -478,8 +552,6 @@ export class ChatComponent implements OnInit, OnDestroy {
         role: 'assistant', 
         content: 'Sorry, something went wrong. Please try again.' 
       });
-    } finally {
-      clearTimeout(safetyTimeout);
       this.isSending = false;
       this.cdr.detectChanges();
     }

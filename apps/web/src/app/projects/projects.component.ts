@@ -523,23 +523,30 @@ export class ProjectsComponent implements OnInit {
     try {
       const projects = await lastValueFrom(this.http.get<any[]>('/projects'));
       this.projects = projects || [];
+      this.loading = false;
 
-      // Load repositories for each project
-      for (const project of this.projects) {
-        try {
-          const repos = await lastValueFrom(this.http.get<Repository[]>(`/repositories?project_id=${project.id}`));
-          this.projectRepositories[project.id] = repos || [];
-        } catch (e) {
-          console.error(`Failed to load repositories for project ${project.id}:`, e);
-          this.projectRepositories[project.id] = [];
-        }
-      }
+      // Load repositories for each project in background
+      this.loadRepositories();
     } catch (e) {
       console.error('Failed to load projects:', e);
       this.error = 'Failed to load projects. Please try again.';
-    } finally {
       this.loading = false;
     }
+  }
+
+  async loadRepositories(): Promise<void> {
+    // Load repositories for each project in parallel
+    const repoPromises = this.projects.map(async (project) => {
+      try {
+        const repos = await lastValueFrom(this.http.get<Repository[]>(`/repositories?project_id=${project.id}`));
+        this.projectRepositories[project.id] = repos || [];
+      } catch (e) {
+        console.error(`Failed to load repositories for project ${project.id}:`, e);
+        this.projectRepositories[project.id] = [];
+      }
+    });
+
+    await Promise.all(repoPromises);
   }
 
   selectProject(project: Project): void {

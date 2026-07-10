@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -75,6 +76,7 @@ func main() {
 	repositoryHandler := handlers.NewRepositoryHandler(repositoryService)
 	// chatContainerHandler := handlers.NewChatContainerHandler(chatContainerService) // No longer needed with NATS
 	healthHandler := handlers.NewHealthHandler()
+	ollamaHandler := handlers.NewOllamaHandler(cfg.OllamaBaseURL)
 
 	// Setup router
 	r := mux.NewRouter()
@@ -109,6 +111,10 @@ func main() {
 	// Auth routes (no auth required)
 	r.HandleFunc("/api/v1/auth/login", authHandler.Login).Methods("POST")
 	r.HandleFunc("/api/v1/auth/register", authHandler.Register).Methods("POST")
+	r.HandleFunc("/api/v1/auth/me", authHandler.GetCurrentUser).Methods("GET")
+
+	// Ollama routes (no auth required - public endpoint for model listing)
+	r.HandleFunc("/api/v1/ollama/models", ollamaHandler.ListModels).Methods("GET", "OPTIONS")
 
 	// Project routes
 	api.HandleFunc("/projects", projectHandler.ListProjects).Methods("GET", "OPTIONS")
@@ -149,23 +155,29 @@ func main() {
 		log.Fatalf("Failed to initialize JetStream: %v", err)
 	}
 
-	// Subscribe to chat start messages
-	_, err = nc.Subscribe("chat.start", func(msg *nats.Msg) {
-		handlers.HandleChatStart(msg, chatContainerService, containerManager, repoRepo, nc, js)
+	// Subscribe to chat start messages on agent.control.>
+	_, err = nc.Subscribe("agent.control.>", func(msg *nats.Msg) {
+		if strings.HasSuffix(msg.Subject, ".start") {
+			handlers.HandleChatStart(msg, chatContainerService, containerManager, repoRepo, nc, js)
+		} else if strings.HasSuffix(msg.Subject, ".cancel") {
+			handlers.HandleChatCancel(msg, chatContainerService, containerManager)
+		} else if strings.HasSuffix(msg.Subject, ".resume") {
+			handlers.HandleChatResume(msg, chatContainerService, containerManager, repoRepo, nc, js)
+		}
 	})
 	if err != nil {
-		log.Fatalf("Failed to subscribe to chat.start: %v", err)
+		log.Fatalf("Failed to subscribe to agent.control.>: %v", err)
 	}
 
 	// Subscribe to chat close messages
-	_, err = nc.Subscribe("chat.close", func(msg *nats.Msg) {
+	_, err = nc.Subscribe("agent.chat.close", func(msg *nats.Msg) {
 		handlers.HandleChatClose(msg, chatContainerService, containerManager)
 	})
 	if err != nil {
-		log.Fatalf("Failed to subscribe to chat.close: %v", err)
+		log.Fatalf("Failed to subscribe to agent.chat.close: %v", err)
 	}
 
-	log.Println("Subscribed to NATS chat.start and chat.close subjects")
+	log.Println("Subscribed to NATS agent.control.> (start/cancel/resume) and agent.chat.close subjects")
 
 	// Wrap router with CORS handler that handles OPTIONS at server level
 	handler := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {

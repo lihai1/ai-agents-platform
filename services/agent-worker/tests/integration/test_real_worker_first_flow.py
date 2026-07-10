@@ -63,7 +63,7 @@ async def test_worker_first_flow_real_skill_lead(
 
         try:
             # Wait for the worker to subscribe and publish its ready signal.
-            ready_gen = nats_test_client.subscribe(f"agent.chat.{run_id}.worker.ready")
+            ready_gen = nats_test_client.subscribe(f"agent.control.container.ready")
             ready_msg = await asyncio.wait_for(anext(ready_gen), timeout=10)
             assert ready_msg.get("status") == "ready", "Worker did not publish ready signal"
 
@@ -97,7 +97,7 @@ async def test_worker_first_flow_real_skill_lead(
             )
             command["payload"]["llm_provider"] = "fake"
             command["payload"]["mock_mode"] = False
-            await nats_test_client.publish(f"agent.chat.{run_id}.user.events", command)
+            await nats_test_client.publish(f"agent.chat.{run_id}.start", command)
 
             # Collect events until the workflow reaches a terminal state or timeout.
             try:

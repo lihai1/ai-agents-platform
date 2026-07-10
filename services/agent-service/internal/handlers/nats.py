@@ -59,7 +59,7 @@ async def handle_agent_state_event(event: dict, push_event_func) -> None:
         logger.info(f"Pushed event to SSE stream for run {run_id}")
     
     # Create ChatKit message based on event type using ChatKit library
-    if run_id and event_type in ["created", "preparing_workspace", "scouting", "planning", "designing", "implementing", "testing", "reviewing", "verifying", "completed", "failed"]:
+    if run_id and event_type in ["created", "preparing_workspace", "scouting", "planning", "designing", "implementing", "testing", "reviewing", "verifying", "completed", "failed", "final_answer", "progress_update"]:
         try:
             client = get_chatkit_client()
             
@@ -75,7 +75,9 @@ async def handle_agent_state_event(event: dict, push_event_func) -> None:
                 "reviewing": "Reviewing changes...",
                 "verifying": "Verifying solution...",
                 "completed": "Task completed successfully",
-                "failed": f"Task failed: {payload.get('error_message', 'Unknown error')}"
+                "failed": f"Task failed: {payload.get('error_message', 'Unknown error')}",
+                "final_answer": payload.get("content", "Task completed"),
+                "progress_update": payload.get("content", "Agent is working...")
             }
             
             message_content = message_map.get(event_type, f"Agent event: {event_type}")
@@ -103,7 +105,7 @@ async def handle_worker_user_event(event: dict, push_event_func) -> None:
     event_type = event.get("event_type")
     payload = event.get("payload", {})
     
-    logger.info(f"Received worker user event for run {run_id}: {event_type}")
+    logger.info(f"Received worker user event for run {run_id}: {event_type}, payload: {payload}")
     
     # Push to SSE stream queue for real-time delivery
     if run_id:

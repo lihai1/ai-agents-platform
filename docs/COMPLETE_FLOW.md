@@ -66,144 +66,101 @@ This document describes the complete flow from UI start page to agent execution,
 1. Create or get thread ID
 2. Save user message to database
 
-**NATS Message 1 - Chat Start:**
+**NATS Message 1 - Run Start:**
 ```python
-# Subject: chat.start
+# Subject: agent.control.{run_id}.start
 await nats.publish_chat_start(
-    chat_id=thread_id,
+    run_id=thread_id,
     repository_id=repository_id,
     project_id=project_id,
-    mock_mode=False
+    user_id=user_id,
+    task=message,
+    chatkit_thread_id=thread_id,
+    mock_mode=False,
+    max_tokens=0,
+    max_cost=0.0,
+    max_repair_count=2
 )
 ```
 
 **Log Output:**
 ```
-[NATS PUBLISH] Publishing chat start {message_id} to subject: chat.start
+[NATS PUBLISH] Publishing chat start {message_id} to subject: agent.control.{run_id}.start
 [NATS PUBLISH] Chat start payload: {...}
 ```
 
-3. Subscribe to agent events for this chat:
+3. Subscribe to global event stream for agent events
 ```python
-await nats.subscribe_to_chat_events(
-    chat_id=thread_id,
-    event_handler=handle_chat_event
-)
-```
-
-**Log Output:**
-```
-Subscribed to agent events for chat {chat_id}
+await nats.subscribe_to_global_events(event_handler=handle_chat_event)
 ```
 
 ### Step 5: Control Plane Creates Container
-**Location:** `services/control-plane/cmd/server/main.go:112-221`
+**Location:** `services/control-plane/cmd/server/main.go:153-175`
 
-**NATS Subscriber:** `chat.start`
+**NATS Subscriber:** `agent.control.>`
 
 **Actions:**
-1. Receive chat.start message
+1. Receive agent.control.{run_id}.start message
    ```
-   [NATS RECEIVE] Received chat start message on subject: chat.start
+   [NATS RECEIVE] Received chat start message on subject: agent.control.{run_id}.start
    [NATS RECEIVE] Chat start payload: {...}
-   [NATS RECEIVE] Chat ID: {chat_id}, Repository ID: {repo_id}, Mock Mode: false
+   [NATS RECEIVE] Run ID: {run_id}, Repository ID: {repo_id}, Mock Mode: false
    ```
 
-2. Create Docker container:
+2. Create Docker container with environment variables:
    ```go
-   chatContainerService.CreateContainer(chatID, repositoryID, mockMode)
+   chatContainerService.CreateSpecialistAgentContainerWithParams(
+       runID, repositoryID, mockMode, llmProvider, apiKey,
+       userID, projectID, task, chatkitThreadID, maxTokens, maxCost, maxRepairCount
+   )
    ```
-   - Container includes: CHAT_ID, REPOSITORY_URL, GIT credentials
+   - Container includes: RUN_ID, USER_ID, TASK, PROJECT_ID, REPOSITORY_ID, etc.
    - Container clones repository
    - Container starts worker process
 
 3. Save ChatContainer record to database
 
-**NATS Message 2 - Agent Chat Start:**
-```go
-// Subject: agent.chat.{chat_id}.start
-subject := fmt.Sprintf("agent.chat.%s.start", chatID)
-nc.Publish(subject, agentStartData)
-```
-
 **Log Output:**
 ```
-[NATS PUBLISH] Publishing agent start message to subject: agent.chat.{chat_id}.start
-[NATS PUBLISH] Agent start payload: {...}
-[NATS PUBLISH] Successfully published agent start message for chat {chat_id}
+[NATS RECEIVE] Creating multi-agent container for run {run_id} with LLM provider {llm_provider}
+[NATS RECEIVE] Successfully created container for run {run_id}
 ```
 
-### Step 6: Python Service Triggers Workflow
-**Location:** `services/agent-service/internal/chatkit/router.py:92-113`
-
-**Condition:** `trigger_workflow=true` and `project_id` and `repository_id` provided
-
-**NATS Message 3 - Run Start Command:**
-```python
-# Subject: agent.chat.{chat_id}.run.start
-await nats.publish_command(
-    command_type="run.start",
-    run_id=chat_id,
-    chat_id=chat_id,
-    payload={
-        "user_id": user_id,
-        "project_id": project_id,
-        "repository_id": repository_id,
-        "task": message,
-        "chatkit_thread_id": thread_id,
-        "max_repair_count": 2
-    }
-)
-```
-
-**Log Output:**
-```
-[NATS PUBLISH] Publishing command {message_id} to subject: agent.chat.{chat_id}.run.start
-[NATS PUBLISH] Command payload: {...}
-[NATS PUBLISH] Successfully published command {message_id} to agent.chat.{chat_id}.run.start
-```
-
-**Response to UI:**
-```
-data: {"content": "Workflow started. Processing your request...", "thread_id": "...", "workflow_triggered": true}
-```
-
-### Step 7: Agent Worker Receives Command
-**Location:** `services/agent-service/app/worker.py:41-93`
-
-**NATS Subscriber:** `agent.chat.{chat_id}.>` (all messages for this chat)
+### Step 6: Worker Auto-Starts Workflow
+**Location:** `services/agent-worker/app/worker.py:31-69`
 
 **Actions:**
-1. Receive run.start command
-   ```
-   [NATS RECEIVE] Received command on subject: agent.chat.{chat_id}.run.start
-   [NATS RECEIVE] Command payload: {...}
-   [WORKER] Received command run.start for chat {chat_id}
-   [WORKER] Command payload: {...}
-   ```
-
-2. Check idempotency (skip if already processed)
-
-3. Execute workflow:
+1. Container starts worker process
+2. Worker connects to NATS
+3. Worker reads run parameters from environment variables:
+   - RUN_ID, USER_ID, TASK, PROJECT_ID, REPOSITORY_ID, etc.
+4. Worker auto-starts workflow immediately:
    ```python
-   result = await create_run({
-       "run_id": chat_id,
-       "user_id": payload["user_id"],
-       "project_id": payload["project_id"],
-       "repository_id": payload["repository_id"],
-       "task": payload["task"],
-       "max_repair_count": 2,
-       "mock_mode": False
-   }, checkpointer)
+   await handle_run_start(
+       self.run_id,
+       {
+           "user_id": os.getenv("USER_ID"),
+           "project_id": os.getenv("PROJECT_ID"),
+           "repository_id": os.getenv("REPOSITORY_ID"),
+           "task": os.getenv("TASK"),
+           "max_repair_count": int(os.getenv("MAX_REPAIR_COUNT", "2")),
+           "mock_mode": os.getenv("MOCK_MODE", "false").lower() == "true",
+       },
+       create_run,
+       get_checkpointer
+   )
    ```
+5. Worker publishes ready signal
 
-4. Acknowledge NATS message
-   ```
-   [NATS RECEIVE] Successfully processed and acked command {message_id}
-   ```
+**Log Output:**
+```
+[WORKER] Starting agent worker for run {run_id}
+[WORKER] Auto-starting run {run_id}
+[WORKER] Agent worker started and auto-started run {run_id}
+```
 
-### Step 8: Orchestrator Agent Executes in Sequence
-**Location:** `services/agent-service/internal/workflow/graph.py`
+### Step 7: Orchestrator Agent Executes in Sequence
+**Location:** `services/agent-worker/internal/workflow/graph.py`
 
 **State Transitions:**
 1. CREATED
@@ -219,13 +176,12 @@ data: {"content": "Workflow started. Processing your request...", "thread_id": "
 
 **For Each State Transition:**
 
-**NATS Message 4+ - Agent State Updates:**
+**NATS Message 2+ - Agent State Updates:**
 ```python
-# Subject: agent.chat.{chat_id}.{state}
+# Subject: agent.events.{run_id}.{state}
 await nats.publish_event(
     event_type=state.lower(),
-    run_id=chat_id,
-    chat_id=chat_id,
+    run_id=run_id,
     payload={
         "state": state,
         "agent": agent_name,
@@ -236,29 +192,29 @@ await nats.publish_event(
 
 **Log Output:**
 ```
-[NATS PUBLISH] Publishing event {message_id} to subject: agent.chat.{chat_id}.scouting
+[NATS PUBLISH] Publishing event {message_id} to subject: agent.events.{run_id}.scouting
 [NATS PUBLISH] Event payload: {...}
-[NATS PUBLISH] Successfully published event {message_id} to agent.chat.{chat_id}.scouting
+[NATS PUBLISH] Successfully published event {message_id} to agent.events.{run_id}.scouting
 ```
 
-### Step 9: Python Service Receives Agent Events
-**Location:** `services/agent-service/internal/chatkit/router.py:56-60`
+### Step 8: Python Service Receives Agent Events
+**Location:** `services/agent-service/internal/chatkit/server.py`
 
-**NATS Subscriber:** `agent.chat.{chat_id}.>`
+**NATS Subscriber:** `agent.events.>` (global event stream)
 
 **Actions:**
 1. Receive event
    ```
-   [NATS RECEIVE] Received event on subject: agent.chat.{chat_id}.scouting
+   [NATS RECEIVE] Received event on subject: agent.events.{run_id}.scouting
    [NATS RECEIVE] Event payload: {...}
-   [NATS RECEIVE] Received agent event for chat {chat_id}: {...}
+   [NATS RECEIVE] Received agent event for run {run_id}: {...}
    ```
 
 2. Update chat state in database
 
 3. Forward to UI via SSE (Server-Sent Events)
 
-### Step 10: UI Displays Agent Updates
+### Step 9: UI Displays Agent Updates
 **Location:** ChatKit client (SSE stream)
 
 **UI Receives:**
@@ -274,18 +230,17 @@ data: {"state": "implementing", "agent": "go-developer", "message": "Writing cod
 - State transitions and progress updates
 - Agent messages and artifacts
 
-### Step 11: Human Intervention (if needed)
+### Step 10: Human Intervention (if needed)
 **Trigger:** Protected action (push, PR, network access, etc.)
 
 **State:** WAITING_APPROVAL
 
 **NATS Message - Approval Request:**
 ```python
-# Subject: agent.chat.{chat_id}.waiting_approval
+# Subject: agent.events.{run_id}.waiting_approval
 await nats.publish_event(
     event_type="waiting_approval",
-    run_id=chat_id,
-    chat_id=chat_id,
+    run_id=run_id,
     payload={
         "approval_id": approval_id,
         "action": "push_code",
@@ -302,30 +257,32 @@ await nats.publish_event(
 
 **NATS Message - Resume Command:**
 ```python
-# Subject: agent.chat.{chat_id}.run.resume
-await nats.publish_command(
-    command_type="run.resume",
-    run_id=chat_id,
-    chat_id=chat_id,
-    payload={
-        "approval_id": approval_id,
-        "decision": "approved"
-    }
+# Subject: agent.control.{run_id}.resume
+await nats.publish_chat_resume(
+    run_id=run_id,
+    repository_id=repository_id,
+    project_id=project_id,
+    mock_mode=False,
+    agent_type="multi-agent",
+    llm_provider="ollama",
+    api_key=""
 )
 ```
 
-**Workflow:** Resumes from checkpoint
+**Control Plane Actions:**
+1. Receives `agent.control.{run_id}.resume`
+2. Recreates container with same parameters
+3. Worker auto-starts and resumes from checkpoint
 
-### Step 12: Workflow Completion
+### Step 11: Workflow Completion
 **Final State:** COMPLETED, FAILED, CANCELLED, or BUDGET_EXCEEDED
 
 **NATS Message - Final Event:**
 ```python
-# Subject: agent.chat.{chat_id}.completed
+# Subject: agent.events.{run_id}.completed
 await nats.publish_event(
     event_type="completed",
-    run_id=chat_id,
-    chat_id=chat_id,
+    run_id=run_id,
     payload={
         "status": "completed",
         "artifacts": [...],
@@ -336,82 +293,82 @@ await nats.publish_event(
 
 **Worker Log:**
 ```
-[WORKER] Run for chat {chat_id} completed with status completed
+[WORKER] Run for run {run_id} completed with status completed
 ```
 
 **UI Shows:** Final status and artifacts
 
-### Step 13: Chat Termination (Optional)
+### Step 12: Chat Termination (Optional)
 **Trigger:** User closes chat
 
 **API Call:** `POST /api/chatkit/close/{thread_id}`
 
 **NATS Message - Chat Close:**
 ```python
-# Subject: chat.close
-await nats.publish_chat_close(chat_id=thread_id)
+# Subject: agent.chat.close
+await nats.publish_chat_close(run_id=run_id)
 ```
 
 **Log Output:**
 ```
-[NATS PUBLISH] Publishing chat close {message_id} to subject: chat.close
+[NATS PUBLISH] Publishing chat close {message_id} to subject: agent.chat.close
 [NATS PUBLISH] Chat close payload: {...}
 ```
 
 **Control Plane Actions:**
 1. Receive chat.close message
    ```
-   [NATS RECEIVE] Received chat close message on subject: chat.close
+   [NATS RECEIVE] Received chat close message on subject: agent.chat.close
    [NATS RECEIVE] Chat close payload: {...}
-   [NATS RECEIVE] Chat ID: {chat_id}
+   [NATS RECEIVE] Run ID: {run_id}
    ```
 
 2. Stop container
 3. Remove container
 4. Update ChatContainer status
    ```
-   [NATS RECEIVE] Successfully terminated container for chat {chat_id}
+   [NATS RECEIVE] Successfully terminated container for run {run_id}
    ```
 
 ## NATS Subject Patterns
 
-### Command Subjects
-- `chat.start` - Trigger container creation
-- `chat.close` - Trigger container termination
-- `agent.chat.{chat_id}.run.start` - Start workflow execution
-- `agent.chat.{chat_id}.run.cancel` - Cancel workflow
-- `agent.chat.{chat_id}.run.resume` - Resume from approval
+### Control Signals (Agent-Service → Control-Plane)
+- `agent.control.{run_id}.start` - Start run with all parameters (user_id, task, project_id, etc.)
+- `agent.control.{run_id}.cancel` - Cancel run (stop & remove container)
+- `agent.control.{run_id}.resume` - Resume run (recreate container)
 
-### Event Subjects
-- `agent.chat.{chat_id}.start` - Container ready signal
-- `agent.chat.{chat_id}.{state}` - State transition events
+### Event Subjects (Worker → Agent-Service)
+- `agent.events.{run_id}.{event_type}` - State transition events
   - `created`, `preparing_workspace`, `scouting`, `planning`, `designing`
   - `implementing`, `testing`, `reviewing`, `verifying`, `repairing`
   - `waiting_approval`, `completed`, `failed`, `cancelled`, `budget_exceeded`
 
+### Close Signal
+- `agent.chat.close` - Trigger container termination
+
 ### Subscription Patterns
-- `agent.chat.{chat_id}.>` - All events for specific chat
-- `agent.chat.>` - All chat-related messages (worker subscription)
+- `agent.control.>` - All control signals (Control Plane subscription)
+- `agent.events.>` - All agent events (Agent Service global event stream)
 
 ## Error Handling
 
 ### No Response After 30 Seconds
 **Possible Causes:**
 1. NATS not running
-2. Control plane not subscribed to chat.start
+2. Control plane not subscribed to agent.control.>
 3. Container creation failed
-4. Worker not running or not subscribed
+4. Worker not running or failed to auto-start
 5. Workflow execution error
 
 **Debug Steps:**
 1. Check NATS connection: `nc.IsConnected()`
-2. Check control plane logs for chat.start receipt
+2. Check control plane logs for agent.control.{run_id}.start receipt
 3. Check container status: `docker ps`
-4. Check worker logs for command receipt
+4. Check worker logs for auto-start errors
 5. Check PostgreSQL for run record
 
 ### Container Creation Fails
-**Symptoms:** No agent.chat.{chat_id}.start message published
+**Symptoms:** No agent.events.{run_id}.* events published
 
 **Debug:**
 - Check control plane logs
@@ -419,10 +376,11 @@ await nats.publish_chat_close(chat_id=thread_id)
 - Check repository access credentials
 
 ### Workflow Doesn't Start
-**Symptoms:** Worker receives command but doesn't execute
+**Symptoms:** Container created but no state events
 
 **Debug:**
-- Check worker logs for errors
+- Check worker logs for auto-start errors
+- Check environment variables in container
 - Check PostgreSQL connection
 - Check LangGraph checkpointer setup
 

@@ -253,3 +253,96 @@ class WorkspaceTools:
             return ["make", "test"]
         else:
             return ["echo", "No test command detected"]
+    
+    async def list_files(
+        self,
+        workspace_id: str,
+        directory: str = ".",
+    ) -> Dict[str, Any]:
+        """List files in a directory"""
+        try:
+            full_path = os.path.join(self.workspace_path, directory.lstrip("/"))
+            
+            if not os.path.exists(full_path):
+                return {
+                    "success": False,
+                    "directory": directory,
+                    "error": f"Directory does not exist: {directory}"
+                }
+            
+            files = []
+            for item in os.listdir(full_path):
+                item_path = os.path.join(full_path, item)
+                files.append({
+                    "name": item,
+                    "type": "directory" if os.path.isdir(item_path) else "file",
+                    "path": os.path.join(directory, item).replace("\\", "/")
+                })
+            
+            await self._publish_tool_event("list_files", "list", {"directory": directory, "count": len(files)})
+            
+            return {
+                "success": True,
+                "directory": directory,
+                "files": files
+            }
+        except Exception as e:
+            logger.error(f"Failed to list files: {e}")
+            await self._publish_tool_event("list_files", "error", {"directory": directory, "error": str(e)})
+            return {
+                "success": False,
+                "directory": directory,
+                "error": str(e)
+            }
+    
+    async def run_command(
+        self,
+        workspace_id: str,
+        command: str,
+        args: List[str] = None,
+        timeout: int = 30,
+    ) -> Dict[str, Any]:
+        """Run a shell command in the workspace"""
+        try:
+            full_command = [command]
+            if args:
+                full_command.extend(args)
+            
+            proc = await asyncio.create_subprocess_exec(
+                *full_command,
+                cwd=self.workspace_path,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            
+            try:
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
+                return {
+                    "success": False,
+                    "command": " ".join(full_command),
+                    "error": f"Command timed out after {timeout} seconds"
+                }
+            
+            await self._publish_tool_event("run_command", "execute", {
+                "command": " ".join(full_command),
+                "exit_code": proc.returncode
+            })
+            
+            return {
+                "success": proc.returncode == 0,
+                "command": " ".join(full_command),
+                "exit_code": proc.returncode,
+                "stdout": stdout.decode(),
+                "stderr": stderr.decode(),
+            }
+        except Exception as e:
+            logger.error(f"Failed to run command: {e}")
+            await self._publish_tool_event("run_command", "error", {"command": command, "error": str(e)})
+            return {
+                "success": False,
+                "command": command,
+                "error": str(e)
+            }

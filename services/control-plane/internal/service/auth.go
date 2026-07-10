@@ -64,3 +64,29 @@ func (s *AuthService) generateToken(userID string) (string, error) {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString([]byte(s.jwtSecret))
 }
+
+func (s *AuthService) GetCurrentUser(tokenString string) (*models.User, error) {
+	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		return []byte(s.jwtSecret), nil
+	})
+	if err != nil {
+		return nil, errors.New("invalid token")
+	}
+
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok || !token.Valid {
+		return nil, errors.New("invalid token")
+	}
+
+	userID, ok := claims["user_id"].(string)
+	if !ok {
+		return nil, errors.New("invalid token claims")
+	}
+
+	user, err := s.userRepo.Get(userID)
+	if err != nil {
+		return nil, errors.New("user not found")
+	}
+
+	return user, nil
+}

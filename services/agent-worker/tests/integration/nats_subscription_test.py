@@ -3,41 +3,9 @@ import pytest
 import asyncio
 from message_fixtures import run_start_fixture
 from internal.handlers.nats import (
-    handle_command,
     handle_run_start,
-    handle_run_cancel,
-    handle_run_resume,
     publish_worker_ready,
 )
-
-
-@pytest.mark.integration
-async def test_handle_command():
-    """Test that handle_command can be imported and called"""
-    # Create a mock command
-    command = {
-        "command_type": "run.start",
-        "run_id": "test-run-123",
-        "payload": {"task": "Test task"}
-    }
-    
-    # Create mock handler functions
-    async def mock_handle_run_start(run_id, payload):
-        pass
-    
-    async def mock_handle_run_cancel(run_id, payload):
-        pass
-    
-    async def mock_handle_run_resume(run_id, payload):
-        pass
-    
-    # Verify handler function exists and is callable
-    # (We don't call it directly because it requires workflow setup)
-    _ = handle_command
-    _ = command
-    _ = mock_handle_run_start
-    _ = mock_handle_run_cancel
-    _ = mock_handle_run_resume
 
 
 @pytest.mark.integration

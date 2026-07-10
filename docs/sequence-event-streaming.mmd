@@ -29,15 +29,15 @@ sequenceDiagram
 
     LangGraph->>PostgreSQL: Save checkpoint<br/>(phase transition)
     LangGraph->>Worker: Emit event<br/>(phase_changed, agent_started, tool_executed)
-    Worker->>NATS: Publish event<br/>agent.events.{run_id}
-    NATS->>WorkflowAPI: Event received
+    Worker->>NATS: Publish event<br/>agent.events.{run_id}.{event_type}
+    NATS->>WorkflowAPI: Event received (global stream)
     WorkflowAPI->>PostgreSQL: Store event in agent_events
     WorkflowAPI->>WebUI: SSE event<br/>{event_id, type, data,<br/>sanitized_output}
 
     loop For each workflow event
         LangGraph->>Worker: Emit event
-        Worker->>NATS: Publish event
-        NATS->>WorkflowAPI: Event received
+        Worker->>NATS: Publish event<br/>agent.events.{run_id}.{event_type}
+        NATS->>WorkflowAPI: Event received (global stream)
         WorkflowAPI->>PostgreSQL: Store event
         WorkflowAPI->>WebUI: SSE event
         WebUI->>User: Update activity panel
@@ -45,8 +45,8 @@ sequenceDiagram
 
     Note over LangGraph: Terminal state reached
     LangGraph->>Worker: Emit final event<br/>(run_completed, run_failed, run_cancelled)
-    Worker->>NATS: Publish final event
-    NATS->>WorkflowAPI: Final event received
+    Worker->>NATS: Publish final event<br/>agent.events.{run_id}.completed
+    NATS->>WorkflowAPI: Final event received (global stream)
     WorkflowAPI->>PostgreSQL: Store final event
     WorkflowAPI->>WebUI: SSE final event
     WorkflowAPI->>WebUI: Close SSE stream

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/agentic-engineering/control-plane/internal/orchestrator"
 	"github.com/agentic-engineering/control-plane/internal/service"
 	"github.com/gorilla/mux"
 )
@@ -20,7 +21,9 @@ type CreateContainerRequest struct {
 	RunID        string `json:"run_id"`
 	RepositoryID string `json:"repository_id"`
 	MockMode     bool   `json:"mock_mode"`
-	AgentType    string `json:"agent_type"` // "multi-agent" or "single-agent"
+	AgentType    string `json:"agent_type"`   // "multi-agent" or "single-agent"
+	LLMProvider  string `json:"llm_provider"` // "fake", "ollama", "openai", "anthropic"
+	APIKey       string `json:"api_key"`      // API key for non-Ollama providers
 }
 
 func (h *ChatContainerHandler) CreateContainer(w http.ResponseWriter, r *http.Request) {
@@ -36,10 +39,30 @@ func (h *ChatContainerHandler) CreateContainer(w http.ResponseWriter, r *http.Re
 	// TODO: Make agent type selection more robust with validation
 	// Currently defaults to multi-agent if not specified
 	if req.AgentType == "single-agent" {
-		container, err = h.containerService.CreateSingleAgentContainer(req.RunID, req.RepositoryID, req.MockMode)
+		repoConfig := orchestrator.RepositoryConfig{
+			RunID:        req.RunID,
+			RepositoryID: req.RepositoryID,
+			Credentials:  nil,
+		}
+		llmConfig := orchestrator.LLMConfig{
+			MockMode:    req.MockMode,
+			LLMProvider: req.LLMProvider,
+			APIKey:      req.APIKey,
+		}
+		container, err = h.containerService.CreateSingleAgentContainer(repoConfig, llmConfig)
 	} else {
 		// Default to multi-agent mode
-		container, err = h.containerService.CreateContainer(req.RunID, req.RepositoryID, req.MockMode)
+		repoConfig := orchestrator.RepositoryConfig{
+			RunID:        req.RunID,
+			RepositoryID: req.RepositoryID,
+			Credentials:  nil,
+		}
+		llmConfig := orchestrator.LLMConfig{
+			MockMode:    req.MockMode,
+			LLMProvider: req.LLMProvider,
+			APIKey:      req.APIKey,
+		}
+		container, err = h.containerService.CreateSpecialistAgentContainer(repoConfig, llmConfig)
 	}
 
 	if err != nil {

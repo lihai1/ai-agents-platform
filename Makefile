@@ -1,4 +1,4 @@
-.PHONY: compose-up compose-down clean-start test-ui help clean build-containers
+.PHONY: compose-up compose-down clean-start test-ui help clean build-containers mock-llm-start
 
 # Default target
 help:
@@ -6,6 +6,7 @@ help:
 	@echo "  make compose-up     - Build containers manually and start services"
 	@echo "  make compose-down   - Stop and remove all containers"
 	@echo "  make clean-start    - Stop deployment, clean volumes, and start fresh"
+	@echo "  make mock-llm-start  - Clean and start with mock LLM (LLM_PROVIDER=fake)"
 	@echo "  make test-ui        - Run UI e2e tests"
 	@echo "  make help           - Show this help message"
 
@@ -32,6 +33,12 @@ clean-start: clean build-containers
 	@echo "Starting services..."
 	docker-compose up -d
 	@echo "Clean start completed successfully"
+
+# Clean and start with mock LLM (LLM_PROVIDER=fake)
+mock-llm-start: clean build-containers
+	@echo "Starting services with mock LLM..."
+	LLM_PROVIDER=fake docker-compose up -d
+	@echo "Mock LLM start completed successfully"
 
 # Terminate deployment, clean volumes, and start fresh
 build-containers:

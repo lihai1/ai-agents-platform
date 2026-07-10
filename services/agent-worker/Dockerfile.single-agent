@@ -6,11 +6,24 @@ RUN apt-get update && apt-get install -y \
     docker-cli \
     wget \
     ca-certificates \
+    libnss3 \
+    libnspr4 \
+    libatk1.0-0 \
+    libatk-bridge2.0-0 \
+    libcups2 \
+    libdrm2 \
+    libxkbcommon0 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxfixes3 \
+    libxrandr2 \
+    libgbm1 \
+    libasound2 \
     && rm -rf /var/lib/apt/lists/*
 
-RUN wget -q https://go.dev/dl/go1.21.6.linux-amd64.tar.gz && \
-    tar -C /usr/local -xzf go1.21.6.linux-amd64.tar.gz && \
-    rm go1.21.6.linux-amd64.tar.gz
+RUN wget -q https://go.dev/dl/go1.26.0.linux-amd64.tar.gz && \
+    tar -C /usr/local -xzf go1.26.0.linux-amd64.tar.gz && \
+    rm go1.26.0.linux-amd64.tar.gz
 ENV PATH=/usr/local/go/bin:$PATH
 
 # Set working directory
@@ -20,6 +33,9 @@ WORKDIR /app
 COPY services/agent-worker /app
 ENV PIP_DEFAULT_TIMEOUT=300
 RUN pip install --no-cache-dir -e .
+
+# Install Playwright browsers
+RUN playwright install chromium
 
 # Copy the fixture repository used for the first real workflow
 COPY services/agent-service/tests/fixtures /app/fixtures

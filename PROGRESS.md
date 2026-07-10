@@ -580,3 +580,50 @@
 22. ✅ Entire platform starts through one documented command (make dev / docker-compose up)
 
 **Definition of Done Progress:** 22/22 criteria (100%)
+
+## TODO / Upcoming Work
+
+### Rate Limiter Implementation
+**Status:** Planned
+**Plan:** `rate-limiter-plan.md`
+
+**Overview:**
+Implement distributed rate limiter using Redis with fixed window with leaky bucket algorithm to protect agent-service from DDOS and API abuse.
+
+**Key Features:**
+- Redis-based distributed rate limiting
+- 20 requests/minute per chat_id
+- 100 requests/minute per user_id
+- HTTP 429 responses with retry-after header
+- Fallback strategy for Redis unavailability
+- Integration with existing X-User-Subject header
+
+**Implementation Stages:**
+1. Backend verification and Redis integration
+2. Rate limiter module with leaky bucket algorithm
+3. FastAPI middleware for rate limiting
+4. Configuration and Docker Compose updates
+5. Testing and verification
+
+### User Authentication Implementation
+**Status:** Planned
+**Plan:** `user-authentication-plan.md`
+
+**Overview:**
+Implement complete user authentication flow with login/register UI components, route guards, and integration with existing control-plane auth endpoints.
+
+**Key Features:**
+- Separate login and register UI components
+- Form validation (email format, password min length, password confirmation)
+- Route guards protecting authenticated routes
+- JWT token storage in localStorage
+- User data persistence and display
+- Logout functionality
+- Integration with control-plane auth endpoints
+
+**5-Stage Implementation:**
+1. Backend Verification & Enhancement - Add `/auth/me` endpoint
+2. Angular Auth Components - Create login/register pages
+3. Angular Auth Service Enhancement - User data management
+4. Route Guards & Routing - Protect routes
+5. Integration & Testing - End-to-end auth flow

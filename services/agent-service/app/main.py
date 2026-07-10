@@ -7,7 +7,7 @@ from internal.db import connect, disconnect, get_session
 from internal.chatkit import chatkit_router
 from internal.messaging.nats import NATSMessaging
 from internal.event_streams import push_event
-from internal.handlers.nats import handle_agent_state_event
+from internal.handlers.nats import handle_agent_state_event, handle_worker_user_event
 from internal.chatkit.router import nats_client, get_nats_client
 from datetime import datetime, timezone
 import os
@@ -38,18 +38,24 @@ async def lifespan(app: FastAPI):
         await nats_client.connect()
         logger.info("NATS connection established")
         
-        # Subscribe to all agent chat events for state updates
+        # Subscribe to all agent events for state updates
         # Using subscribe_to_events to listen to agent.events.> pattern
         await nats_client.subscribe_to_events(
             event_handler=lambda event: handle_agent_state_event(event, push_event),
             run_id=None  # Subscribe to all runs
         )
         
-        # Also subscribe to agent.chat.> for final_answer events
-        # This is a different subject than agent.events.>
+        # Subscribe to control-plane signals
+        # Using subscribe_to_control to listen to agent.control.> pattern
+        await nats_client.subscribe_to_control(
+            control_handler=lambda event: handle_agent_state_event(event, push_event),
+        )
+        
+        # Subscribe to worker output events (final_answer, progress_update)
+        # Using subscribe_to_chat_events to listen to agent.chat.> pattern
         await nats_client.subscribe_to_chat_events(
-            run_id=None,
-            event_handler=lambda event: handle_agent_state_event(event, push_event),
+            event_handler=lambda event: handle_worker_user_event(event, push_event),
+            run_id=None  # Subscribe to all runs
         )
         
         logger.info("Connected to NATS and subscribed to agent state events")

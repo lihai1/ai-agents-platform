@@ -18,27 +18,22 @@ class NatsBridge:
         prompt: str,
         metadata: dict,
     ) -> None:
-        # Publish to chat.start for container creation
+        # Publish to agent.chat.{run_id}.start for container creation with all run parameters
         await self.nats.publish_chat_start(
             run_id=run_id,
             repository_id=metadata.get("repository_id", ""),
             project_id=metadata.get("project_id", ""),
             mock_mode=metadata.get("mock_mode", False),
-        )
-
-        # Publish to agent.chat.{run_id}.user.events for run request
-        await self.nats.publish_orchestration_command(
-            command_type="run.start",
-            run_id=run_id,
-            payload={
-                "user_id": user_subject,
-                "project_id": metadata.get("project_id", ""),
-                "repository_id": metadata.get("repository_id", ""),
-                "task": prompt,
-                "run_id": run_id,
-                "mock_mode": metadata.get("mock_mode", False),
-                "llm_provider": metadata.get("llm_provider", "ollama"),
-            },
+            agent_type=metadata.get("agent_type", "specialist"),
+            llm_provider=metadata.get("llm_provider", "ollama"),
+            model_name=metadata.get("model_name", "qwen3.5:9b"),
+            api_key=metadata.get("api_key", ""),
+            user_id=user_subject,
+            task=prompt,
+            chatkit_thread_id=conversation_id,
+            max_tokens=metadata.get("max_tokens", 0),
+            max_cost=metadata.get("max_cost", 0.0),
+            max_repair_count=metadata.get("max_repair_count", 2),
         )
 
     async def subscribe_run_events(self, run_id: str) -> AsyncIterator[dict[str, Any]]:

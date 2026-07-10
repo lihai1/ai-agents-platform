@@ -5,7 +5,7 @@ graph TB
 
     subgraph "API Layer"
         ControlPlane[Go Control Plane<br/>Port 8080<br/>Users, Projects, Repos]
-        AgentAPI[Python Agent API<br/>Port 8000<br/>FastAPI]
+        AgentService[Python Agent Service<br/>Port 8000<br/>FastAPI<br/>ChatKit + Messaging]
     end
 
     subgraph "Worker Layer"
@@ -33,18 +33,18 @@ graph TB
 
     %% Client to API connections
     WebUI -->|HTTP/REST| ControlPlane
-    WebUI -->|HTTP/REST| AgentAPI
-    WebUI -->|SSE Events| AgentAPI
+    WebUI -->|HTTP/REST| AgentService
+    WebUI -->|SSE Events| AgentService
 
     %% API to Worker via NATS
-    AgentAPI -->|Publish Commands| NATS
+    AgentService -->|Publish Commands| NATS
     AgentWorker -->|Subscribe Commands| NATS
     AgentWorker -->|Publish Events| NATS
-    AgentAPI -->|Subscribe Events| NATS
+    AgentService -->|Subscribe Events| NATS
 
     %% Database connections
     ControlPlane -->|SQL| PostgreSQL
-    AgentAPI -->|SQL| PostgreSQL
+    AgentService -->|SQL| PostgreSQL
     AgentWorker -->|Checkpointer| PostgreSQL
 
     %% LangSmith tracing
@@ -68,7 +68,7 @@ graph TB
     classDef external fill:#cfd8dc,stroke:#455a64,stroke-width:2px
 
     class WebUI client
-    class ControlPlane,AgentAPI api
+    class ControlPlane,AgentService api
     class AgentWorker worker
     class NATS messaging
     class PostgreSQL,LangSmith data

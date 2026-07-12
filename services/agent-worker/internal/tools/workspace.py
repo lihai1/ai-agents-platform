@@ -15,13 +15,16 @@ logger = logging.getLogger(__name__)
 class WorkspaceTools:
     """Tools for interacting with the container workspace (local file system)"""
     
-    def __init__(self, workspace_path: str = "/workspace", run_id: Optional[str] = None):
+    def __init__(self, run_id: str = None, user_id: str = None, workspace_path: str = "/workspace"):
         self.workspace_path = workspace_path
         self.run_id = run_id
+        self.user_id = user_id
     
     async def _publish_tool_event(self, tool_name: str, action: str, details: Dict[str, Any]):
         """Publish tool execution event to NATS"""
-        if not self.run_id:
+        if not self.run_id or not self.user_id:
+            # Log error locally since run_id/user_id are required for NATS publishing
+            logger.error(f"[WORKSPACE] Missing run_id/user_id for tool event: {tool_name}.{action}")
             return
         
         try:
@@ -31,26 +34,18 @@ class WorkspaceTools:
             if not nats.js:
                 return
             
-            # Publish to agent.events.{run_id}.tool.executed
-            event = {
-                "message_id": str(uuid.uuid4()),
-                "event_type": "tool.executed",
-                "run_id": self.run_id,
-                "payload": {
-                    "tool": tool_name,
-                    "action": action,
-                    "details": details,
-                    "timestamp": datetime.utcnow().isoformat(),
-                },
+            # Reuse existing publish_event pattern
+            payload = {
+                "tool": tool_name,
+                "action": action,
+                "details": details,
                 "timestamp": datetime.utcnow().isoformat(),
-                "schema_version": "1.0",
             }
-            
-            subject = f"agent.events.{self.run_id}.tool.executed"
-            await nats.js.publish(
-                subject=subject,
-                payload=json.dumps(event).encode(),
-                headers={"run_id": self.run_id}
+            await nats.publish_event(
+                event_type="tool.executed",
+                run_id=self.run_id,
+                user_id=self.user_id,
+                payload=payload,
             )
             logger.info(f"[WORKSPACE] Published tool event: {tool_name} - {action}")
         except Exception as e:

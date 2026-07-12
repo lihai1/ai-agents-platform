@@ -42,7 +42,7 @@ sequenceDiagram
     Orchestrator->>Orchestrator: Analyze task
     
     loop Agent sequence execution
-        Orchestrator->>NATS: Publish state<br/>agent.events.{run_id}.scouting
+        Orchestrator->>NATS: Publish state<br/>agent.user.{uid}.events.{rid}.state.scouting
         NATS->>AgentService: State update (global stream)
         AgentService->>PostgreSQL: Update chat state
         AgentService->>WebUI: SSE event
@@ -52,7 +52,7 @@ sequenceDiagram
         Agents->>Container: Read repository files
         Agents-->>Orchestrator: Repository summary
         
-        Orchestrator->>NATS: Publish state<br/>agent.events.{run_id}.planning
+        Orchestrator->>NATS: Publish state<br/>agent.user.{uid}.events.{rid}.state.planning
         NATS->>AgentService: State update
         AgentService->>WebUI: SSE event
         WebUI->>User: Show "Planning solution"
@@ -63,7 +63,7 @@ sequenceDiagram
         Orchestrator->>Agents: solution-planner agent
         Agents-->>Orchestrator: Implementation plan
         
-        Orchestrator->>NATS: Publish state<br/>agent.events.{run_id}.designing
+        Orchestrator->>NATS: Publish state<br/>agent.user.{uid}.events.{rid}.state.designing
         NATS->>AgentService: State update
         AgentService->>WebUI: SSE event
         WebUI->>User: Show "Designing solution"
@@ -71,7 +71,7 @@ sequenceDiagram
         Orchestrator->>Agents: Design agent
         Agents-->>Orchestrator: Design spec
         
-        Orchestrator->>NATS: Publish state<br/>agent.events.{run_id}.implementing
+        Orchestrator->>NATS: Publish state<br/>agent.user.{uid}.events.{rid}.state.implementing
         NATS->>AgentService: State update
         AgentService->>WebUI: SSE event
         WebUI->>User: Show "Implementing"
@@ -87,7 +87,7 @@ sequenceDiagram
             Agents->>Container: Write/patch files
         end
         
-        Orchestrator->>NATS: Publish state<br/>agent.events.{run_id}.testing
+        Orchestrator->>NATS: Publish state<br/>agent.user.{uid}.events.{rid}.state.testing
         NATS->>AgentService: State update
         AgentService->>WebUI: SSE event
         WebUI->>User: Show "Testing"
@@ -96,7 +96,7 @@ sequenceDiagram
         Agents->>Container: Run tests
         Agents-->>Orchestrator: Test results
         
-        Orchestrator->>NATS: Publish state<br/>agent.events.{run_id}.reviewing
+        Orchestrator->>NATS: Publish state<br/>agent.user.{uid}.events.{rid}.state.reviewing
         NATS->>AgentService: State update
         AgentService->>WebUI: SSE event
         WebUI->>User: Show "Reviewing code"
@@ -104,7 +104,7 @@ sequenceDiagram
         Orchestrator->>Agents: Code reviewer
         Agents-->>Orchestrator: Review results
         
-        Orchestrator->>NATS: Publish state<br/>agent.events.{run_id}.verifying
+        Orchestrator->>NATS: Publish state<br/>agent.user.{uid}.events.{rid}.state.verifying
         NATS->>AgentService: State update
         AgentService->>WebUI: SSE event
         WebUI->>User: Show "Verifying completion"
@@ -113,12 +113,12 @@ sequenceDiagram
         Agents-->>Orchestrator: Verification result
         
         alt Verification passed
-            Orchestrator->>NATS: Publish state<br/>agent.events.{run_id}.completed
+            Orchestrator->>NATS: Publish state<br/>agent.user.{uid}.events.{rid}.state.completed
             NATS->>AgentService: State update
             AgentService->>WebUI: SSE event
             WebUI->>User: Show "Task completed"
         else Verification failed
-            Orchestrator->>NATS: Publish state<br/>agent.events.{run_id}.repairing
+            Orchestrator->>NATS: Publish state<br/>agent.user.{uid}.events.{rid}.state.repairing
             NATS->>AgentService: State update
             AgentService->>WebUI: SSE event
             WebUI->>User: Show "Repairing issues"
@@ -129,7 +129,7 @@ sequenceDiagram
     
     Note over User,PostgreSQL: Human Intervention Flow
     alt Protected action detected
-        Orchestrator->>NATS: Publish state<br/>agent.events.{run_id}.waiting_approval
+        Orchestrator->>NATS: Publish state<br/>agent.user.{uid}.events.{rid}.state.waiting_approval
         NATS->>AgentService: State update
         AgentService->>WebUI: SSE event
         WebUI->>User: Show approval dialog
@@ -145,10 +145,10 @@ sequenceDiagram
     Note over User,PostgreSQL: Chat Termination Flow
     User->>WebUI: Close chat
     WebUI->>AgentService: POST /api/chatkit/close/{chat_id}
-    AgentService->>NATS: Publish chat.close<br/>{chat_id}
+    AgentService->>NATS: Publish agent.control.{run_id}.close<br/>{run_id}
     NATS-->>AgentService: Published
     
-    NATS->>ControlPlane: Deliver chat.close
+    NATS->>ControlPlane: Deliver close message
     ControlPlane->>Container: Stop container
     Container->>Container: Cleanup resources
     ControlPlane->>Container: Remove container

@@ -266,19 +266,8 @@ export class RegisterComponent {
     this.authService.register(email, password, name).subscribe({
       next: (user) => {
         console.log('Registration successful:', user);
-        // Auto-login after registration
-        this.authService.login(email, password).subscribe({
-          next: (response) => {
-            console.log('Login successful:', response);
-            this.authService.setToken(response.token);
-            this.authService.setUser(user);
-            this.router.navigate(['/projects']);
-          },
-          error: (err) => {
-            console.error('Auto-login failed:', err);
-            this.router.navigate(['/login']);
-          }
-        });
+        // Registration succeeded; proceed to login so the auth guard is exercised
+        this.router.navigate(['/login']);
       },
       error: (err) => {
         console.error('Registration failed:', err);

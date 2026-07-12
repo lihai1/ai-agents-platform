@@ -1,8 +1,6 @@
+from abc import ABC
 from typing import Dict, Any
-from langchain.agents import AgentExecutor, create_tool_calling_agent
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_openai import ChatOpenAI
-from langchain_anthropic import ChatAnthropic
+from langchain_core.prompts import ChatPromptTemplate
 from internal.agents.schemas import (
     SkillsLeadDecision,
     RepositorySummary,
@@ -10,29 +8,42 @@ from internal.agents.schemas import (
 )
 from internal.tools.repository import ReadOnlyRepositoryTools
 from internal.agents.model_factory import get_model
-from pydantic import BaseModel
 import json
 
 
-class SkillsLeadAgent:
-    """Agent that selects appropriate specialists for a task"""
-    
+class BaseSpecialistAgent(ABC):
+    """Base class for specialist agents that use a structured-output LangChain model."""
+
     def __init__(self, model_name: str = "gpt-4"):
         self.model = get_model(model_name)
-        self.available_specialists = [
-            "go-developer",
-            "angular-developer",
-            "angular-ui-developer",
-            "devops-developer",
-            "backend-test-engineer",
-            "angular-test-engineer",
-            "code-reviewer",
-            "completion-verifier"
-        ]
-    
+
+    async def _run_structured_prompt(
+        self,
+        prompt: ChatPromptTemplate,
+        schema: type,
+        **kwargs: Any,
+    ) -> Any:
+        """Build and invoke a chain that returns a structured output."""
+        chain = prompt | self.model.with_structured_output(schema)
+        return await chain.ainvoke(kwargs)
+
+
+class SkillsLeadAgent(BaseSpecialistAgent):
+    """Agent that selects appropriate specialists for a task"""
+
+    available_specialists = [
+        "go-developer",
+        "angular-developer",
+        "angular-ui-developer",
+        "devops-developer",
+        "backend-test-engineer",
+        "angular-test-engineer",
+        "code-reviewer",
+        "completion-verifier",
+    ]
+
     async def select_specialists(self, task: str, repository_summary: Dict[str, Any]) -> SkillsLeadDecision:
         """Select appropriate specialists for the task"""
-        
         prompt = ChatPromptTemplate.from_messages([
             ("system", """You are the skills-lead agent. Your job is to select the appropriate specialist agents for a given task.
 
@@ -47,48 +58,40 @@ Available specialists:
 - completion-verifier: For verifying completion against acceptance criteria
 
 Analyze the task and repository summary to determine which specialists are needed."""),
-            ("human", "Task: {task}\n\nRepository Summary:\n{repository_summary}")
+            ("human", "Task: {task}\n\nRepository Summary:\n{repository_summary}"),
         ])
-        
-        chain = prompt | self.model.with_structured_output(SkillsLeadDecision)
-        
-        result = await chain.ainvoke({
-            "task": task,
-            "repository_summary": json.dumps(repository_summary, indent=2)
-        })
-        
-        return result
+        return await self._run_structured_prompt(
+            prompt,
+            SkillsLeadDecision,
+            task=task,
+            repository_summary=json.dumps(repository_summary, indent=2),
+        )
 
 
-class RepoScoutAgent:
+class RepoScoutAgent(BaseSpecialistAgent):
     """Agent that analyzes a repository"""
-    
-    def __init__(self, repository_path, model_name: str = "gpt-4"):
+
+    def __init__(self, repository_path: str, model_name: str = "gpt-4"):
+        super().__init__(model_name=model_name)
         self.repository_path = repository_path
-        self.model = get_model(model_name)
         self.repo_tools = ReadOnlyRepositoryTools(repository_path)
-    
+
     async def analyze_repository(self) -> RepositorySummary:
         """Analyze the repository and return a summary"""
-        
-        # Gather repository information
         all_files = self.repo_tools.list_files()
         directory_structure = self.repo_tools.get_directory_structure()
-        
-        # Detect language based on file extensions
-        language_counts = {}
+
+        language_counts: Dict[str, int] = {}
         for file_path in all_files:
             ext = file_path.split('.')[-1] if '.' in file_path else 'unknown'
             language_counts[ext] = language_counts.get(ext, 0) + 1
-        
+
         primary_language = max(language_counts.items(), key=lambda x: x[1])[0] if language_counts else "unknown"
-        
-        # Categorize files
+
         test_files = [f for f in all_files if 'test' in f.lower() or f.endswith('_test.go') or f.endswith('.test.ts')]
         config_files = [f for f in all_files if any(x in f.lower() for x in ['config', 'yaml', 'json', 'toml', 'env'])]
         main_files = [f for f in all_files if f not in test_files and f not in config_files]
-        
-        # Detect build system
+
         build_system = None
         if "Makefile" in all_files or "makefile" in all_files:
             build_system = "make"
@@ -98,8 +101,7 @@ class RepoScoutAgent:
             build_system = "go"
         elif "Cargo.toml" in all_files:
             build_system = "cargo"
-        
-        # Detect test framework
+
         test_framework = None
         if any("_test.go" in f for f in all_files):
             test_framework = "go testing"
@@ -109,8 +111,7 @@ class RepoScoutAgent:
             test_framework = "jasmine/karma"
         elif any("pytest" in f for f in all_files):
             test_framework = "pytest"
-        
-        # Use LLM to enhance the summary
+
         prompt = ChatPromptTemplate.from_messages([
             ("system", """You are the repo-scout agent. Analyze the repository information and provide a comprehensive summary.
 
@@ -129,22 +130,22 @@ Focus on:
 - Config files: {config_files}
 - Directory structure: {directory_structure}
 
-Provide a comprehensive repository summary.""")
+Provide a comprehensive repository summary."""),
         ])
-        
-        chain = prompt | self.model.with_structured_output(RepositorySummary)
-        
-        result = await chain.ainvoke({
-            "primary_language": primary_language,
-            "build_system": build_system,
-            "test_framework": test_framework,
-            "total_files": len(all_files),
-            "test_files": len(test_files),
-            "main_files": len(main_files),
-            "config_files": len(config_files),
-            "directory_structure": json.dumps(directory_structure, indent=2)
-        })
-        
+
+        result = await self._run_structured_prompt(
+            prompt,
+            RepositorySummary,
+            primary_language=primary_language,
+            build_system=build_system,
+            test_framework=test_framework,
+            total_files=len(all_files),
+            test_files=len(test_files),
+            main_files=len(main_files),
+            config_files=len(config_files),
+            directory_structure=json.dumps(directory_structure, indent=2),
+        )
+
         # Override with actual counts
         result.total_files = len(all_files)
         result.test_files = len(test_files)
@@ -154,24 +155,20 @@ Provide a comprehensive repository summary.""")
         result.build_system = build_system
         result.test_framework = test_framework
         result.primary_language = primary_language
-        
+
         return result
 
 
-class SolutionPlannerAgent:
+class SolutionPlannerAgent(BaseSpecialistAgent):
     """Agent that creates implementation plans"""
-    
-    def __init__(self, model_name: str = "gpt-4"):
-        self.model = get_model(model_name)
-    
+
     async def create_plan(
         self,
         task: str,
         repository_summary: RepositorySummary,
-        selected_specialists: list[str]
+        selected_specialists: list[str],
     ) -> ImplementationPlan:
         """Create an implementation plan for the task"""
-        
         prompt = ChatPromptTemplate.from_messages([
             ("system", """You are the solution-planner agent. Your job is to create a detailed implementation plan for a given task.
 
@@ -191,15 +188,12 @@ Repository Summary:
 
 Selected Specialists: {selected_specialists}
 
-Create a detailed implementation plan.""")
+Create a detailed implementation plan."""),
         ])
-        
-        chain = prompt | self.model.with_structured_output(ImplementationPlan)
-        
-        result = await chain.ainvoke({
-            "task": task,
-            "repository_summary": repository_summary.model_dump_json(indent=2),
-            "selected_specialists": ", ".join(selected_specialists)
-        })
-        
-        return result
+        return await self._run_structured_prompt(
+            prompt,
+            ImplementationPlan,
+            task=task,
+            repository_summary=repository_summary.model_dump_json(indent=2),
+            selected_specialists=", ".join(selected_specialists),
+        )

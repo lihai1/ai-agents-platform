@@ -1,6 +1,6 @@
 # Control Plane Service
 
-Go control plane service for the agentic engineering platform. Manages users, organizations, projects, repositories, and agent container orchestration.
+Go control plane service for the agentic engineering platform. Manages users, organizations, projects, repositories, and agent container orchestration. Accessed internally via agent-service proxy for UI requests.
 
 ## Features
 
@@ -9,13 +9,13 @@ Go control plane service for the agentic engineering platform. Manages users, or
 - **Repository Management**: Git repository metadata and configuration
 - **Container Orchestration**: Docker container creation for agent workspaces
 - **Docker Bind Orchestrator**: Direct Docker socket/HTTP container lifecycle management
-- **NATS Integration**: Message-based communication with agent service
+- **NATS Integration**: Message-based communication with agent service using NATS JetStream with durable consumers
 - **Mock Docker Mode**: Simulated container creation for testing (set `MOCK_DOCKER=true`)
 
 ## Quick Start
 
 ### Prerequisites
-- Go 1.23+
+- Go 1.26+
 - Docker and Docker Compose
 - golang-migrate CLI
 
@@ -76,16 +76,15 @@ docker-compose --profile full up -d control-plane
 
 The control plane subscribes to NATS subjects for container orchestration:
 
-- **chat.start**: Triggers container creation for a run session
-- **chat.close**: Triggers container termination for a run session
+- **agent.control.{run_id}.start**: Triggers container creation for a run session
+- **agent.control.{run_id}.close**: Triggers container termination for a run session
 
 ### Message Flow
 
-1. Agent Service publishes `chat.start` message with run_id and repository_id
+1. Agent Service publishes `agent.control.{run_id}.start` message with run_id and repository_id
 2. Control Plane receives message and creates Docker container
 3. If `MOCK_DOCKER=true`, the container creation is simulated and the flow continues immediately
-4. Control Plane publishes `agent.chat.{run_id}.worker.ready` to signal readiness
-5. Agent worker receives signal and begins workflow execution
+4. Container starts with environment variables, worker auto-starts workflow
 
 ### Mock Mode
 
@@ -127,10 +126,9 @@ make test-integration
 ```
 
 Integration tests require PostgreSQL and NATS to be running locally. The tests verify:
-- NATS subscription to `chat.start` and `chat.close` messages
-- Container lifecycle via NATS agent start messages
+- NATS subscription to `agent.control.>` messages
+- Container lifecycle via NATS agent start/close messages
 - Orchestrator command reception and container creation
-- Worker ready signal handling
 
 ### Linting
 
@@ -151,6 +149,22 @@ The control plane uses the following schema:
 - `app.organizations` - Organization entities
 - `app.projects` - Project entities
 - `app.repositories` - Git repository metadata
+
+## Current State & Goal for Personal Use
+
+**Current state:** The control-plane provides CRUD APIs for users, organizations, projects, and repositories, and it creates/terminates agent containers on NATS `agent.control.{run_id}.start`/`close` messages. The worker now clones the selected repository into `/workspace` before the workflow starts. A custom CrewAI wrapper worker type discovers available agent projects and surfaces them in the chat session, so the user can pick which multi-agent project to run. It is **demo-ready** but not production-ready for real repositories.
+
+**First goal:** Orchestrate agentic AI workflows in controlled isolated environments with secured remote controls, full open-source usage, and free local LLMs.
+
+**Personal-use goal:** Provide the small-scale resource management and container orchestration layer for a single-user home deployment, so a user can register, create projects, attach repositories, and run isolated agent experiment workflows without risks.
+
+## Next Milestone
+
+1. **Approval workflow:** Add NATS subscription or API endpoint to receive approval decisions and propagate them to the worker.
+2. **Budget tracking:** Persist and expose `max_tokens`/`max_cost` for runs and update `cost_incurred`/`tokens_used` from worker events.
+3. **End-to-end tests:** Extend integration tests to verify the full `start` → container creation → `completed` event flow.
+
+See main [README.md](../../README.md) for future goals and milestones.
 
 ## Implementation Status
 

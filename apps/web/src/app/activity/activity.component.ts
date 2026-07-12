@@ -226,7 +226,7 @@ export class ActivityComponent implements OnInit {
     try {
       // Load steps from API
       const steps = await lastValueFrom(
-        this.http.get<AgentStep[]>(`http://localhost:8000/agent/v1/runs/${this.chatId}/steps`, {
+        this.http.get<AgentStep[]>(`/api/agent/runs/${this.chatId}/steps`, {
           headers: { Authorization: `Bearer ${token}` }
         })
       );
@@ -234,7 +234,7 @@ export class ActivityComponent implements OnInit {
       
       // Load events from API
       const events = await lastValueFrom(
-        this.http.get<AgentEvent[]>(`http://localhost:8000/agent/v1/runs/${this.chatId}/events`, {
+        this.http.get<AgentEvent[]>(`/api/agent/runs/${this.chatId}/events`, {
           headers: { Authorization: `Bearer ${token}` }
         })
       );

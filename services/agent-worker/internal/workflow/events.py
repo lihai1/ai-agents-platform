@@ -101,6 +101,7 @@ async def stream_events(
 
 async def publish_event(
     run_id: str,
+    user_id: str,
     step_id: Optional[str],
     event_type: str,
     event_data: dict,
@@ -135,7 +136,7 @@ async def publish_event(
         await nats.publish_event(
             event_type=event_type,
             run_id=run_id,
-            chat_id=run_id,  # chat_id = run_id
+            user_id=user_id,
             payload={
                 "event_type": event_type,
                 "run_id": run_id,

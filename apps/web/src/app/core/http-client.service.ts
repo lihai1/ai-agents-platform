@@ -7,7 +7,7 @@ import { catchError } from 'rxjs/operators';
   providedIn: 'root'
 })
 export class HttpClientService {
-  private apiUrl = '/api/v1'; // Use relative path for Angular proxy
+  private apiUrl = ''; // Empty base URL - full paths are specified in component calls
   private agentApiUrl = 'http://localhost:8000';
 
   constructor(private http: HttpClient) {}
@@ -23,8 +23,10 @@ export class HttpClientService {
     });
 
     // Add X-User-Subject header for agent-service requests
+    // Sanitize user ID: replace colons with hyphens for NATS subject compatibility
     if (user?.id) {
-      return headers.set('X-User-Subject', user.id);
+      const sanitizedUserId = user.id.replace(/:/g, '-');
+      return headers.set('X-User-Subject', sanitizedUserId);
     }
 
     return headers;
@@ -32,7 +34,10 @@ export class HttpClientService {
 
   get<T>(url: string, useAgentApi = false): Observable<T> {
     const baseUrl = useAgentApi ? this.agentApiUrl : this.apiUrl;
-    return this.http.get<T>(`${baseUrl}${url}`, { headers: this.getHeaders() })
+    const fullUrl = `${baseUrl}${url}`;
+    const headers = this.getHeaders();
+    console.log(`GET ${fullUrl}`, { headers: headers.keys() });
+    return this.http.get<T>(fullUrl, { headers })
       .pipe(catchError(this.handleError));
   }
 

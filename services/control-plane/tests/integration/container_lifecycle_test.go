@@ -2,122 +2,116 @@ package integration_test
 
 import (
 	"encoding/json"
-	"testing"
 	"time"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
-func TestContainerLifecyclePublishStart(t *testing.T) {
-	nc := getNATSConnection(t)
-	defer nc.Close()
+var _ = Describe("ContainerLifecyclePublishStart", func() {
+	It("should publish agent start message", func() {
+		nc := getNATSConnection()
 
-	subject := "agent.chat.test-run-123.start"
+		subject := "agent.control.test-run-123.start"
 
-	// Publish agent start message
-	message := map[string]interface{}{
-		"message_id":   "test-msg-789",
-		"command_type": "run.start",
-		"run_id":       "test-run-123",
-		"payload": map[string]interface{}{
-			"user_id":       "test-user-123",
-			"project_id":    "test-project-123",
-			"repository_id": "test-repo-123",
-			"task":          "Test task",
-		},
-		"timestamp":      time.Now().UTC().Format(time.RFC3339),
-		"schema_version": "1.0",
-	}
-	messageBytes, err := json.Marshal(message)
-	if err != nil {
-		t.Fatalf("Failed to marshal message: %v", err)
-	}
+		// Publish agent start message
+		message := map[string]interface{}{
+			"message_id":     "test-msg-789",
+			"run_id":         "test-run-123",
+			"user_id":        "test-user-123",
+			"project_id":     "test-project-123",
+			"repository_id":  "test-repo-123",
+			"task":           "Test task",
+			"mock_mode":      false,
+			"agent_type":     "specialist",
+			"llm_provider":   "ollama",
+			"model_name":     "qwen3.5:9b",
+			"api_key":        "",
+			"timestamp":      time.Now().UTC().Format(time.RFC3339),
+			"schema_version": "1.0",
+		}
+		messageBytes, err := json.Marshal(message)
+		Expect(err).NotTo(HaveOccurred())
 
-	err = nc.Publish(subject, messageBytes)
-	if err != nil {
-		t.Fatalf("Failed to publish message: %v", err)
-	}
+		err = nc.Publish(subject, messageBytes)
+		Expect(err).NotTo(HaveOccurred())
 
-	// Wait a bit for message to be processed
-	time.Sleep(100 * time.Millisecond)
-}
+		// Wait a bit for message to be processed
+		time.Sleep(100 * time.Millisecond)
+	})
+})
 
-func TestContainerLifecyclePublishCancel(t *testing.T) {
-	nc := getNATSConnection(t)
-	defer nc.Close()
+var _ = Describe("ContainerLifecyclePublishCancel", func() {
+	It("should publish close message", func() {
+		nc := getNATSConnection()
 
-	subject := "agent.chat.test-run-123.cancel"
+		subject := "agent.control.test-run-123.close"
 
-	// Publish cancel message
-	message := map[string]interface{}{
-		"message_id":     "test-msg-790",
-		"command_type":   "run.cancel",
-		"run_id":         "test-run-123",
-		"payload":        map[string]interface{}{},
-		"timestamp":      time.Now().UTC().Format(time.RFC3339),
-		"schema_version": "1.0",
-	}
-	messageBytes, err := json.Marshal(message)
-	if err != nil {
-		t.Fatalf("Failed to marshal message: %v", err)
-	}
+		// Publish close message
+		message := map[string]interface{}{
+			"message_id":     "test-msg-790",
+			"run_id":         "test-run-123",
+			"timestamp":      time.Now().UTC().Format(time.RFC3339),
+			"schema_version": "1.0",
+		}
+		messageBytes, err := json.Marshal(message)
+		Expect(err).NotTo(HaveOccurred())
 
-	err = nc.Publish(subject, messageBytes)
-	if err != nil {
-		t.Fatalf("Failed to publish message: %v", err)
-	}
+		err = nc.Publish(subject, messageBytes)
+		Expect(err).NotTo(HaveOccurred())
 
-	// Wait a bit for message to be processed
-	time.Sleep(100 * time.Millisecond)
-}
+		// Wait a bit for message to be processed
+		time.Sleep(100 * time.Millisecond)
+	})
+})
 
-func TestContainerLifecycleFullFlow(t *testing.T) {
-	nc := getNATSConnection(t)
-	defer nc.Close()
+var _ = Describe("ContainerLifecycleFullFlow", func() {
+	It("should publish start and close messages", func() {
+		nc := getNATSConnection()
 
-	runID := "test-run-lifecycle-123"
-	startSubject := "agent.chat." + runID + ".start"
-	cancelSubject := "agent.chat." + runID + ".cancel"
+		runID := "test-run-lifecycle-123"
+		startSubject := "agent.control." + runID + ".start"
+		closeSubject := "agent.control." + runID + ".close"
 
-	// Publish start message
-	startMessage := map[string]interface{}{
-		"message_id":     "test-msg-start",
-		"command_type":   "run.start",
-		"run_id":         runID,
-		"payload":        map[string]interface{}{},
-		"timestamp":      time.Now().UTC().Format(time.RFC3339),
-		"schema_version": "1.0",
-	}
-	startBytes, err := json.Marshal(startMessage)
-	if err != nil {
-		t.Fatalf("Failed to marshal message: %v", err)
-	}
+		// Publish start message
+		startMessage := map[string]interface{}{
+			"message_id":     "test-msg-start",
+			"run_id":         runID,
+			"user_id":        "test-user-123",
+			"project_id":     "test-project-123",
+			"repository_id":  "test-repo-123",
+			"task":           "Test task",
+			"mock_mode":      false,
+			"agent_type":     "specialist",
+			"llm_provider":   "ollama",
+			"model_name":     "qwen3.5:9b",
+			"api_key":        "",
+			"timestamp":      time.Now().UTC().Format(time.RFC3339),
+			"schema_version": "1.0",
+		}
+		startBytes, err := json.Marshal(startMessage)
+		Expect(err).NotTo(HaveOccurred())
 
-	err = nc.Publish(startSubject, startBytes)
-	if err != nil {
-		t.Fatalf("Failed to publish message: %v", err)
-	}
+		err = nc.Publish(startSubject, startBytes)
+		Expect(err).NotTo(HaveOccurred())
 
-	// Wait a bit for message to be processed
-	time.Sleep(100 * time.Millisecond)
+		// Wait a bit for message to be processed
+		time.Sleep(100 * time.Millisecond)
 
-	// Publish cancel message
-	cancelMessage := map[string]interface{}{
-		"message_id":     "test-msg-cancel",
-		"command_type":   "run.cancel",
-		"run_id":         runID,
-		"payload":        map[string]interface{}{},
-		"timestamp":      time.Now().UTC().Format(time.RFC3339),
-		"schema_version": "1.0",
-	}
-	cancelBytes, err := json.Marshal(cancelMessage)
-	if err != nil {
-		t.Fatalf("Failed to marshal message: %v", err)
-	}
+		// Publish close message
+		closeMessage := map[string]interface{}{
+			"message_id":     "test-msg-close",
+			"run_id":         runID,
+			"timestamp":      time.Now().UTC().Format(time.RFC3339),
+			"schema_version": "1.0",
+		}
+		closeBytes, err := json.Marshal(closeMessage)
+		Expect(err).NotTo(HaveOccurred())
 
-	err = nc.Publish(cancelSubject, cancelBytes)
-	if err != nil {
-		t.Fatalf("Failed to publish message: %v", err)
-	}
+		err = nc.Publish(closeSubject, closeBytes)
+		Expect(err).NotTo(HaveOccurred())
 
-	// Wait a bit for message to be processed
-	time.Sleep(100 * time.Millisecond)
-}
+		// Wait a bit for message to be processed
+		time.Sleep(100 * time.Millisecond)
+	})
+})

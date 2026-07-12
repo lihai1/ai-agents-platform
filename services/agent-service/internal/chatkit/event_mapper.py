@@ -30,6 +30,11 @@ def is_completed_event(event: dict[str, Any]) -> bool:
 
 def is_failed_event(event: dict[str, Any]) -> bool:
     event_type = get_event_type(event)
+    payload = _payload(event)
+    if payload.get("error") is True:
+        return True
+    if event_type == "final_answer" and payload.get("status") == "failed":
+        return True
     return event_type in {
         "agent.failed",
         "agent.run.failed",
@@ -117,12 +122,11 @@ def progress_from_event(event: dict[str, Any]) -> ProgressUpdateEvent:
         )
 
     if event_type in {"tool.executed", "agent.tool.executed", "agent.run.tool.executed"}:
+        tool_name = payload.get('tool', 'unknown')
+        action = payload.get('action', 'unknown')
         return ProgressUpdateEvent(
             icon="wrench",
-            text=(
-                f"Tool executed: {payload.get('tool', 'unknown')} "
-                f"({payload.get('action', 'unknown')})"
-            ),
+            text=f"Tool executed: {tool_name} ({action})",
         )
 
     if event_type in {"tool.allowed", "agent.tool.allowed", "agent.run.tool.allowed"}:

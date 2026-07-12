@@ -35,7 +35,7 @@ sequenceDiagram
     Workspace->>Workspace: Remove volume
     Workspace-->>LangGraph: Cleanup complete
     LangGraph->>PostgreSQL: Update AgentRun<br/>(status: CANCELLED)
-    Worker->>NATS: Publish final event<br/>agent.events.{run_id}.cancelled
+    Worker->>NATS: Publish final event<br/>agent.user.{uid}.events.{rid}.state.cancelled
 
     Note over NATS,PythonService: Event propagation
     NATS->>PythonService: Event: run_cancelled

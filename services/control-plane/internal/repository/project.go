@@ -17,7 +17,7 @@ func NewProjectRepository(db *sql.DB) *ProjectRepository {
 }
 
 func (r *ProjectRepository) List() ([]*models.Project, error) {
-	query := `SELECT id, organization_id, name, description, created_at, updated_at FROM app.projects`
+	query := `SELECT id, organization_id, name, description, thread_id, created_at, updated_at FROM app.projects`
 	rows, err := r.db.Query(query)
 	if err != nil {
 		return nil, err
@@ -27,7 +27,7 @@ func (r *ProjectRepository) List() ([]*models.Project, error) {
 	var projects []*models.Project
 	for rows.Next() {
 		project := &models.Project{}
-		err := rows.Scan(&project.ID, &project.OrganizationID, &project.Name, &project.Description, &project.CreatedAt, &project.UpdatedAt)
+		err := rows.Scan(&project.ID, &project.OrganizationID, &project.Name, &project.Description, &project.RunID, &project.CreatedAt, &project.UpdatedAt)
 		if err != nil {
 			return nil, err
 		}
@@ -49,8 +49,8 @@ func (r *ProjectRepository) Create(project *models.Project) (*models.Project, er
 
 func (r *ProjectRepository) Get(id string) (*models.Project, error) {
 	project := &models.Project{}
-	query := `SELECT id, organization_id, name, description, created_at, updated_at FROM app.projects WHERE id = $1`
-	err := r.db.QueryRow(query, id).Scan(&project.ID, &project.OrganizationID, &project.Name, &project.Description, &project.CreatedAt, &project.UpdatedAt)
+	query := `SELECT id, organization_id, name, description, thread_id, created_at, updated_at FROM app.projects WHERE id = $1`
+	err := r.db.QueryRow(query, id).Scan(&project.ID, &project.OrganizationID, &project.Name, &project.Description, &project.RunID, &project.CreatedAt, &project.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -58,8 +58,8 @@ func (r *ProjectRepository) Get(id string) (*models.Project, error) {
 }
 
 func (r *ProjectRepository) Update(project *models.Project) (*models.Project, error) {
-	query := `UPDATE app.projects SET name = $1, description = $2, updated_at = NOW() WHERE id = $3 RETURNING updated_at`
-	err := r.db.QueryRow(query, project.Name, project.Description, project.ID).Scan(&project.UpdatedAt)
+	query := `UPDATE app.projects SET name = $1, description = $2, thread_id = $3, updated_at = NOW() WHERE id = $4 RETURNING updated_at`
+	err := r.db.QueryRow(query, project.Name, project.Description, project.RunID, project.ID).Scan(&project.UpdatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update project: %w", err)
 	}

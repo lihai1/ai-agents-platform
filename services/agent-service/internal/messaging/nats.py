@@ -56,246 +56,138 @@ class NATSMessaging:
     
     async def _create_streams(self) -> None:
         """Create JetStream streams if they don't exist"""
-        try:
-            # Chat stream - covers agent.chat.* for user events
-            await self.js.add_stream(
-                name="AGENT_CHAT",
-                subjects=["agent.chat.>"],
-                description="Agent chat stream for user events",
-                retention="limits",
-                max_age=86400,  # 24 hours
-                storage="file",
-                republish=None,
-                allow_direct=True,
-            )
-            logger.info("Created/verified stream AGENT_CHAT with subjects agent.chat.>")
-        except Exception as e:
-            logger.warning(f"Chat stream may already exist: {e}")
-        
-        try:
-            # Control stream - covers agent.control.* for control-plane signals
-            await self.js.add_stream(
-                name="AGENT_CONTROL",
-                subjects=["agent.control.>"],
-                description="Agent control stream",
-                retention="limits",
-                max_age=86400,  # 24 hours
-                storage="file",
-                republish=None,
-                allow_direct=True,
-            )
-            logger.info("Created/verified stream AGENT_CONTROL with subjects agent.control.>")
-        except Exception as e:
-            logger.warning(f"Command stream may already exist: {e}")
-        
-        try:
-            # Event stream - also uses agent.chat.{run_id}.{event}
-            # We can use the same stream for both commands and events
-            # Or create separate streams with different retention policies
-            await self.js.add_stream(
-                name=self.event_stream_name,
-                subjects=["agent.events.>"],
-                description="Agent event stream",
-                retention="limits",
-                max_age=86400,  # 24 hours
-                storage="file",
-                republish=None,
-                allow_direct=True,
-            )
-            logger.info(f"Created/verified stream {self.event_stream_name} with subjects agent.events.>")
-        except Exception as e:
-            logger.warning(f"Event stream may already exist: {e}")
+        stream_configs = [
+            {
+                "name": "AGENT_CHAT",
+                "subjects": ["agent.user.*.chat.>"],
+                "description": "Agent chat stream for user events",
+                "label": "Chat",
+            },
+            {
+                "name": "AGENT_CONTROL",
+                "subjects": ["agent.control.>"],
+                "description": "Agent control stream",
+                "label": "Command",
+            },
+            {
+                "name": self.event_stream_name,
+                "subjects": ["agent.user.*.events.>"],
+                "description": "Agent event stream",
+                "label": "Event",
+            },
+            {
+                "name": "AGENT_ERRORS",
+                "subjects": ["agent.user.*.chat.errors"],
+                "description": "Agent error stream",
+                "label": "Error",
+            },
+        ]
+
+        for config in stream_configs:
+            try:
+                await self.js.add_stream(
+                    name=config["name"],
+                    subjects=config["subjects"],
+                    description=config["description"],
+                    retention="limits",
+                    max_age=86400,  # 24 hours
+                    storage="file",
+                    republish=None,
+                    allow_direct=True,
+                )
+                logger.info("Created/verified stream %s with subjects %s", config["name"], config["subjects"][0])
+            except Exception as e:
+                logger.warning("%s stream may already exist: %s", config["label"], e)
     
-    async def publish_command(
+    async def _publish_message(
         self,
-        command_type: str,
-        run_id: str,
-        payload: Dict[str, Any],
+        subject: str,
+        label: str,
         message_id: Optional[str] = None,
+        *,
+        use_jetstream: bool = True,
+        include_headers: bool = True,
+        **message_fields: Any,
     ) -> str:
-        """Publish a command to the command stream"""
-        if not self.js:
+        """Build and publish a JSON message to a NATS subject."""
+        if use_jetstream and not self.js:
             raise RuntimeError("NATS not connected")
-        
+        if not use_jetstream and not self.nc:
+            raise RuntimeError("NATS not connected")
+
         message_id = message_id or str(uuid.uuid4())
-        
-        # Use agent.run.{run_id}.{command_type} for run commands
-        subject = f"agent.run.{run_id}.{command_type}"
-        
         message = {
             "message_id": message_id,
-            "command_type": command_type,
-            "run_id": run_id,
-            "payload": payload,
             "timestamp": datetime.utcnow().isoformat(),
             "schema_version": "1.0",
+            **message_fields,
         }
-        
+        data = json.dumps(message).encode()
+
         try:
-            logger.info(f"[NATS PUBLISH] Publishing command {message_id} to subject: {subject}")
-            logger.info(f"[NATS PUBLISH] Command payload: {json.dumps(message, indent=2)}")
-            ack = await self.js.publish(
-                subject=subject,
-                payload=json.dumps(message).encode(),
-                headers={
-                    "message_id": message_id,
-                    "run_id": run_id,
-                }
-            )
-            logger.info(f"[NATS PUBLISH] Successfully published command {message_id} to {subject}")
+            logger.info(f"[NATS PUBLISH] Publishing {label} {message_id} to subject: {subject}")
+            logger.info(f"[NATS PUBLISH] {label.capitalize()} payload: {json.dumps(message, indent=2)}")
+            if use_jetstream:
+                if include_headers:
+                    await self.js.publish(
+                        subject,
+                        data,
+                        headers={
+                            "message_id": message_id,
+                            "run_id": message.get("run_id", ""),
+                        },
+                    )
+                else:
+                    await self.js.publish(subject, data)
+            else:
+                await self.nc.publish(subject, data)
+            logger.info(f"[NATS PUBLISH] Successfully published {label} {message_id} to {subject}")
             return message_id
         except Exception as e:
-            logger.error(f"[NATS PUBLISH] Failed to publish command to {subject}: {e}")
+            logger.error(f"[NATS PUBLISH] Failed to publish {label} to {subject}: {e}")
             raise
-    
+
     async def publish_event(
         self,
         event_type: str,
         run_id: str,
         payload: Dict[str, Any],
+        user_id: str,
         message_id: Optional[str] = None,
     ) -> str:
         """Publish an event to the event stream"""
-        if not self.js:
-            raise RuntimeError("NATS not connected")
-        
-        message_id = message_id or str(uuid.uuid4())
-        
-        # Use agent.events.> pattern for events to avoid conflict with commands
-        subject = f"agent.events.{run_id}.{event_type}"
-        
-        message = {
-            "message_id": message_id,
-            "event_type": event_type,
-            "run_id": run_id,
-            "payload": payload,
-            "timestamp": datetime.utcnow().isoformat(),
-            "schema_version": "1.0",
-        }
-        
-        try:
-            logger.info(f"[NATS PUBLISH] Publishing event {message_id} to subject: {subject}")
-            logger.info(f"[NATS PUBLISH] Event payload: {json.dumps(message, indent=2)}")
-            ack = await self.js.publish(
-                subject=subject,
-                payload=json.dumps(message).encode(),
-                headers={
-                    "message_id": message_id,
-                    "run_id": run_id,
-                }
-            )
-            logger.info(f"[NATS PUBLISH] Successfully published event {message_id} to {subject}")
-            return message_id
-        except Exception as e:
-            logger.error(f"[NATS PUBLISH] Failed to publish event to {subject}: {e}")
-            raise
-    
-    async def subscribe_to_commands(
-        self,
-        command_handler: Callable[[Dict[str, Any]], None],
-        queue_group: str = "agent-workers",
-        run_id: Optional[str] = None,
-    ) -> None:
-        """Subscribe to command stream with durable consumer"""
-        if not self.js:
-            raise RuntimeError("NATS not connected")
-        
-        # Create unique durable consumer name with service_id and run_id
-        if run_id:
-            subject = f"agent.run.{run_id}.>"
-            consumer_name = f"{self.service_id}-{queue_group}-{run_id}-consumer"
-        else:
-            subject = "agent.run.>"
-            consumer_name = f"{self.service_id}-{queue_group}-consumer"
-        
-        try:
-            # Create subscription with JetStream
-            await self.js.subscribe(
-                subject=subject,
-                cb=await self._create_command_handler(command_handler),
-                manual_ack=True,
-            )
-            logger.info(f"Subscribed to commands on {subject}")
-        except Exception as e:
-            logger.error(f"Failed to subscribe to commands: {e}")
-            raise
-    
-    async def _create_command_handler(
-        self,
-        handler: Callable[[Dict[str, Any]], None],
-    ) -> Callable:
-        """Create async handler for command messages"""
-        async def command_handler_wrapper(msg):
-            try:
-                # Parse message
-                data = json.loads(msg.data.decode())
-                message_id = data.get("message_id")
-                subject = msg.subject
-                
-                logger.info(f"[NATS RECEIVE] Received command on subject: {subject}")
-                logger.info(f"[NATS RECEIVE] Command payload: {json.dumps(data, indent=2)}")
-                
-                # Check idempotency
-                if message_id in self.processed_messages:
-                    logger.debug(f"[NATS RECEIVE] Message {message_id} already processed, skipping")
-                    await msg.ack()
-                    return
-                
-                # Process message
-                await handler(data)
-                
-                # Mark as processed
-                self.processed_messages[message_id] = datetime.utcnow()
-                
-                # Acknowledge message
-                await msg.ack()
-                logger.info(f"[NATS RECEIVE] Successfully processed and acked command {message_id}")
-                
-            except Exception as e:
-                logger.error(f"[NATS RECEIVE] Error processing command: {e}")
-                # Negative acknowledge to retry
-                await msg.nak()
-        
-        return command_handler_wrapper
-    
-    async def subscribe_to_control(
-        self,
-        control_handler: Callable[[Dict[str, Any]], None],
-    ) -> None:
-        """Subscribe to control-plane signals"""
-        if not self.js:
-            raise RuntimeError("NATS not connected")
-        
-        subject = "agent.control.>"
-        consumer_name = f"{self.service_id}-control-consumer"
-        
-        try:
-            # Create subscription with JetStream
-            await self.js.subscribe(
-                subject=subject,
-                cb=await self._create_event_handler(control_handler),
-                manual_ack=True,
-            )
-            logger.info(f"Subscribed to control signals on subject: {subject}")
-        except Exception as e:
-            logger.error(f"Failed to subscribe to control signals: {e}")
-            raise
+        subject = f"agent.user.{user_id}.events.{run_id}.state.{event_type}"
+        return await self._publish_message(
+            subject=subject,
+            label="event",
+            message_id=message_id,
+            run_id=run_id,
+            event_type=event_type,
+            payload=payload,
+        )
     
     async def subscribe_to_events(
         self,
         event_handler: Callable[[Dict[str, Any]], None],
+        user_id: Optional[str] = None,
         run_id: Optional[str] = None,
     ) -> None:
-        """Subscribe to events for a specific run or all runs"""
+        """Subscribe to events for a specific user/run or all users/runs"""
         if not self.js:
             raise RuntimeError("NATS not connected")
         
-        # Create unique durable consumer name with service_id and run_id
-        if run_id:
-            subject = f"agent.events.{run_id}.>"
+        # Create unique durable consumer name with service_id, user_id and run_id
+        if user_id and run_id:
+            subject = f"agent.user.{user_id}.events.{run_id}.state.>"
+            consumer_name = f"{self.service_id}-events-{user_id}-{run_id}-consumer"
+        elif user_id:
+            subject = f"agent.user.{user_id}.events.>"
+            consumer_name = f"{self.service_id}-events-{user_id}-consumer"
+        elif run_id:
+            subject = f"agent.user.*.events.{run_id}.state.>"
             consumer_name = f"{self.service_id}-events-{run_id}-consumer"
         else:
-            subject = "agent.events.>"
+            subject = "agent.user.*.events.>"
             consumer_name = f"{self.service_id}-events-consumer"
         
         try:
@@ -354,85 +246,35 @@ class NATSMessaging:
         api_key: str = "",
         user_id: str = "",
         task: str = "",
-        chatkit_thread_id: str = "",
         max_tokens: int = 0,
         max_cost: float = 0.0,
         max_repair_count: int = 2,
         message_id: Optional[str] = None,
     ) -> str:
         """Publish a chat start message to trigger container creation"""
-        if not self.js:
-            raise RuntimeError("NATS not connected")
-        
-        message_id = message_id or str(uuid.uuid4())
+        # Use plain NATS for agent.control.{run_id}.start to match control plane subscription
         subject = f"agent.control.{run_id}.start"
-        
-        message = {
-            "message_id": message_id,
-            "run_id": run_id,
-            "repository_id": repository_id,
-            "project_id": project_id,
-            "user_id": user_id,
-            "task": task,
-            "mock_mode": mock_mode,
-            "agent_type": agent_type,
-            "llm_provider": llm_provider,
-            "model_name": model_name,
-            "api_key": api_key,
-            "chatkit_thread_id": chatkit_thread_id,
-            "max_tokens": max_tokens,
-            "max_cost": max_cost,
-            "max_repair_count": max_repair_count,
-            "timestamp": datetime.utcnow().isoformat(),
-            "schema_version": "1.0",
-        }
-        
-        try:
-            logger.info(f"[NATS PUBLISH] Publishing chat start {message_id} to subject: {subject}")
-            logger.info(f"[NATS PUBLISH] Chat start payload: {json.dumps(message, indent=2)}")
-            # Use plain NATS for chat.start to match control plane subscription
-            await self.nc.publish(
-                subject=subject,
-                payload=json.dumps(message).encode(),
-            )
-            logger.info(f"[NATS PUBLISH] Successfully published chat start {message_id} to {subject}")
-            return message_id
-        except Exception as e:
-            logger.error(f"[NATS PUBLISH] Failed to publish chat start to {subject}: {e}")
-            raise
+        return await self._publish_message(
+            subject=subject,
+            label="chat start",
+            message_id=message_id,
+            use_jetstream=False,
+            include_headers=False,
+            run_id=run_id,
+            repository_id=repository_id,
+            project_id=project_id,
+            user_id=user_id,
+            task=task,
+            mock_mode=mock_mode,
+            agent_type=agent_type,
+            llm_provider=llm_provider,
+            model_name=model_name,
+            api_key=api_key,
+            max_tokens=max_tokens,
+            max_cost=max_cost,
+            max_repair_count=max_repair_count,
+        )
     
-    async def publish_chat_close(
-        self,
-        run_id: str,
-        message_id: Optional[str] = None,
-    ) -> str:
-        """Publish a chat close message to trigger container termination"""
-        if not self.js:
-            raise RuntimeError("NATS not connected")
-        
-        message_id = message_id or str(uuid.uuid4())
-        subject = "chat.close"
-        
-        message = {
-            "message_id": message_id,
-            "run_id": run_id,
-            "timestamp": datetime.utcnow().isoformat(),
-            "schema_version": "1.0",
-        }
-        
-        try:
-            logger.info(f"[NATS PUBLISH] Publishing chat close {message_id} to subject: {subject}")
-            logger.info(f"[NATS PUBLISH] Chat close payload: {json.dumps(message, indent=2)}")
-            # Use plain NATS for chat.close to match control plane subscription
-            await self.nc.publish(
-                subject=subject,
-                payload=json.dumps(message).encode(),
-            )
-            logger.info(f"[NATS PUBLISH] Successfully published chat close {message_id} to {subject}")
-            return message_id
-        except Exception as e:
-            logger.error(f"[NATS PUBLISH] Failed to publish chat close to {subject}: {e}")
-            raise
     
     async def subscribe_plain(
         self,
@@ -461,19 +303,26 @@ class NATSMessaging:
 
     async def subscribe_to_chat_events(
         self,
-        run_id: Optional[str],
         event_handler: Callable[[Dict[str, Any]], None],
+        user_id: Optional[str] = None,
+        run_id: Optional[str] = None,
     ) -> None:
-        """Subscribe to worker output events for a specific run or all runs"""
+        """Subscribe to worker output events for a specific user/run or all users/runs"""
         if not self.js:
             raise RuntimeError("NATS not connected")
         
-        # Create unique durable consumer name with service_id and run_id
-        if run_id:
-            subject = f"agent.chat.{run_id}.events"
+        # Create unique durable consumer name with service_id, user_id and run_id
+        if user_id and run_id:
+            subject = f"agent.user.{user_id}.chat.{run_id}.worker.events"
+            consumer_name = f"{self.service_id}-chat-{user_id}-{run_id}-consumer"
+        elif user_id:
+            subject = f"agent.user.{user_id}.chat.*.worker.events"
+            consumer_name = f"{self.service_id}-chat-{user_id}-consumer"
+        elif run_id:
+            subject = f"agent.user.*.chat.{run_id}.worker.events"
             consumer_name = f"{self.service_id}-chat-{run_id}-consumer"
         else:
-            subject = "agent.chat.>"
+            subject = "agent.user.*.chat.*.worker.events"
             consumer_name = f"{self.service_id}-chat-consumer"
         
         try:
@@ -494,61 +343,35 @@ class NATSMessaging:
         event_type: str,
         run_id: str,
         payload: Dict[str, Any],
+        user_id: str,
         message_id: Optional[str] = None,
     ) -> str:
-        """Publish a chat event to the chat stream"""
-        if not self.js:
-            raise RuntimeError("NATS not connected")
-        
-        message_id = message_id or str(uuid.uuid4())
-        
-        # Use agent.chat.{run_id}.user.events for user events
-        subject = f"agent.chat.{run_id}.user.events"
-        
-        message = {
-            "message_id": message_id,
-            "event_type": event_type,
-            "run_id": run_id,
-            "payload": payload,
-            "timestamp": datetime.utcnow().isoformat(),
-            "schema_version": "1.0",
-        }
-        
-        try:
-            await self.js.publish(subject, json.dumps(message).encode())
-            logger.info(f"[NATS PUBLISH] Published chat event {event_type} to {subject}")
-            return message_id
-        except Exception as e:
-            logger.error(f"[NATS PUBLISH] Failed to publish chat event: {e}")
-            raise
+        """Publish a chat event to the chat stream (user events like tool approvals)"""
+        subject = f"agent.user.{user_id}.chat.{run_id}.user.events"
+        return await self._publish_message(
+            subject=subject,
+            label="chat event",
+            message_id=message_id,
+            include_headers=False,
+            run_id=run_id,
+            event_type=event_type,
+            payload=payload,
+        )
     
-    async def publish_chat_cancel(
+    async def publish_chat_close(
         self,
         run_id: str,
         message_id: Optional[str] = None,
     ) -> str:
-        """Publish a chat cancel command to the control stream"""
-        if not self.js:
-            raise RuntimeError("NATS not connected")
-        
-        message_id = message_id or str(uuid.uuid4())
-        
-        subject = f"agent.control.{run_id}.cancel"
-        
-        message = {
-            "message_id": message_id,
-            "run_id": run_id,
-            "timestamp": datetime.utcnow().isoformat(),
-            "schema_version": "1.0",
-        }
-        
-        try:
-            await self.js.publish(subject, json.dumps(message).encode())
-            logger.info(f"[NATS PUBLISH] Published chat cancel to {subject}")
-            return message_id
-        except Exception as e:
-            logger.error(f"[NATS PUBLISH] Failed to publish chat cancel: {e}")
-            raise
+        """Publish a chat close command to the control stream"""
+        subject = f"agent.control.{run_id}.close"
+        return await self._publish_message(
+            subject=subject,
+            label="chat close",
+            message_id=message_id,
+            include_headers=False,
+            run_id=run_id,
+        )
     
     async def publish_chat_resume(
         self,
@@ -562,72 +385,66 @@ class NATSMessaging:
         message_id: Optional[str] = None,
     ) -> str:
         """Publish a chat resume command to the control stream"""
-        if not self.js:
-            raise RuntimeError("NATS not connected")
-        
-        message_id = message_id or str(uuid.uuid4())
-        
         subject = f"agent.control.{run_id}.resume"
-        
-        message = {
-            "message_id": message_id,
-            "run_id": run_id,
-            "repository_id": repository_id,
-            "project_id": project_id,
-            "mock_mode": mock_mode,
-            "agent_type": agent_type,
-            "llm_provider": llm_provider,
-            "api_key": api_key,
-            "timestamp": datetime.utcnow().isoformat(),
-            "schema_version": "1.0",
-        }
-        
-        try:
-            await self.js.publish(subject, json.dumps(message).encode())
-            logger.info(f"[NATS PUBLISH] Published chat resume to {subject}")
-            return message_id
-        except Exception as e:
-            logger.error(f"[NATS PUBLISH] Failed to publish chat resume: {e}")
-            raise
+        return await self._publish_message(
+            subject=subject,
+            label="chat resume",
+            message_id=message_id,
+            include_headers=False,
+            run_id=run_id,
+            repository_id=repository_id,
+            project_id=project_id,
+            mock_mode=mock_mode,
+            agent_type=agent_type,
+            llm_provider=llm_provider,
+            api_key=api_key,
+        )
     
-    async def publish_orchestration_command(
+    async def subscribe_to_errors(
         self,
-        command_type: str,
-        run_id: str,
-        payload: Dict[str, Any],
-        message_id: Optional[str] = None,
-    ) -> str:
-        """Publish an orchestration command to the user events stream"""
+        event_handler: Callable[[Dict[str, Any]], None],
+    ) -> None:
+        """Subscribe to error messages from agent-worker"""
         if not self.js:
             raise RuntimeError("NATS not connected")
-        
-        message_id = message_id or str(uuid.uuid4())
-        subject = f"agent.run.{run_id}.{command_type}"
-        
-        message = {
-            "message_id": message_id,
-            "command_type": command_type,
-            "run_id": run_id,
-            "payload": payload,
-            "timestamp": datetime.utcnow().isoformat(),
-            "schema_version": "1.0",
-        }
-        
+
+        subject = "agent.user.*.chat.errors"
+        consumer_name = f"{self.service_id}-errors-consumer"
+
         try:
-            logger.info(f"[NATS PUBLISH] Publishing orchestration command {message_id} to subject: {subject}")
-            logger.info(f"[NATS PUBLISH] Orchestration command payload: {json.dumps(message, indent=2)}")
-            ack = await self.js.publish(
+            # Reuse existing event handler pattern
+            await self.js.subscribe(
                 subject=subject,
-                payload=json.dumps(message).encode(),
-                headers={
-                    "message_id": message_id,
-                    "run_id": run_id,
-                }
+                cb=await self._create_event_handler(event_handler),
+                manual_ack=True,
             )
-            logger.info(f"[NATS PUBLISH] Successfully published orchestration command {message_id} to {subject}")
-            return message_id
+            logger.info(f"Subscribed to errors on subject: {subject}")
         except Exception as e:
-            logger.error(f"[NATS PUBLISH] Failed to publish orchestration command to {subject}: {e}")
+            logger.error(f"Failed to subscribe to errors: {e}")
+            raise
+
+    async def subscribe_to_worker_ready(
+        self,
+        event_handler: Callable[[Dict[str, Any]], None],
+    ) -> None:
+        """Subscribe to worker ready signals from agent workers"""
+        if not self.js:
+            raise RuntimeError("NATS not connected")
+
+        subject = "agent.control.worker.>.ready"
+        consumer_name = f"{self.service_id}-worker-ready-consumer"
+
+        try:
+            # Use JetStream subscription to match worker's JetStream publication
+            await self.js.subscribe(
+                subject=subject,
+                stream="AGENT_CONTROL",
+                cb=await self._create_event_handler(event_handler),
+                manual_ack=True,
+            )
+            logger.info(f"Subscribed to worker ready signals on subject: {subject} with stream AGENT_CONTROL")
+        except Exception as e:
+            logger.error(f"Failed to subscribe to worker ready signals: {e}")
             raise
     
     def cleanup_old_messages(self, max_age_hours: int = 24) -> None:

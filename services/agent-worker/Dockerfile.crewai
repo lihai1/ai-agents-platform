@@ -1,0 +1,32 @@
+FROM python:3.12-slim
+
+# Install system dependencies for git, build tools, and common CLI tooling
+RUN apt-get update && apt-get install -y \
+    git \
+    build-essential \
+    curl \
+    bash \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR /app
+
+# Copy agent worker code and install dependencies
+COPY services/agent-worker /app
+ENV PIP_DEFAULT_TIMEOUT=300
+RUN pip install --no-cache-dir -e .
+
+# Copy common scripts
+COPY services/agent-worker/scripts/container-start.sh /app/container-start.sh
+RUN chmod +x /app/container-start.sh
+COPY services/agent-worker/scripts/clone-repo.sh /app/scripts/clone-repo.sh
+RUN chmod +x /app/scripts/clone-repo.sh
+
+# Set environment variables
+ENV WORKSPACE_PATH=/workspace
+ENV PYTHON_MODULE=agent_worker.main
+ENV PYTHONPATH=/app/internal/agents/crewai/src
+
+# Default command runs the CrewAI worker
+CMD ["/app/container-start.sh"]

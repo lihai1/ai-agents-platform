@@ -262,3 +262,50 @@ func (s *ChatContainerService) CreateSingleAgentContainerWithParams(repoConfig o
 
 	return container, nil
 }
+
+// CreateCrewAIContainerWithParams creates a container for CrewAI mode with run parameters
+func (s *ChatContainerService) CreateCrewAIContainerWithParams(repoConfig orchestrator.RepositoryConfig, llmConfig orchestrator.LLMConfig, runParams orchestrator.RunParameters) (*models.ChatContainer, error) {
+	repositoryURL := repoConfig.RepositoryURL
+	branch := repoConfig.Branch
+	runID := repoConfig.RunID
+
+	if repoConfig.RepositoryID != "" {
+		// Get repository details
+		repo, err := s.repoRepo.Get(repoConfig.RepositoryID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get repository: %w", err)
+		}
+		repositoryURL = repo.GitURL
+		branch = repo.Branch
+	} else {
+		log.Printf("No repository_id provided for run %s, creating crewai container without repository", runID)
+	}
+
+	// Update repoConfig with actual repository details
+	repoConfig.RepositoryURL = repositoryURL
+	repoConfig.Branch = branch
+
+	// Create CrewAI container via orchestrator with params
+	containerInfo, err := s.manager.CreateCrewAIContainerWithParams(repoConfig, llmConfig, runParams)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create crewai container: %w", err)
+	}
+
+	// Save to database
+	container := &models.ChatContainer{
+		ID:            containerInfo.ID,
+		RunID:         runID,
+		ContainerID:   containerInfo.ContainerID,
+		ContainerName: containerInfo.ContainerName,
+		RepositoryURL: repositoryURL,
+		Branch:        branch,
+		Status:        containerInfo.Status,
+		CreatedAt:     containerInfo.CreatedAt,
+	}
+
+	if err := s.containerRepo.Create(container); err != nil {
+		return nil, fmt.Errorf("failed to save crewai container: %w", err)
+	}
+
+	return container, nil
+}

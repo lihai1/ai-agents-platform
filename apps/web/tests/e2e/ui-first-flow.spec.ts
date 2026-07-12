@@ -167,7 +167,7 @@ test.describe('UI First Flow — Projects → Chat → Agent Response', () => {
 
     // Intercept the real POST to agent service
     const chatApiCall = page.waitForResponse(
-      res => res.url().includes('/chatkit/') && res.request().method() === 'POST',
+      res => res.url().includes('/api/chatkit/') && res.request().method() === 'POST',
       { timeout: 15000 }
     );
 
@@ -230,7 +230,7 @@ test.describe('UI First Flow — Projects → Chat → Agent Response', () => {
     await textarea.fill('What can you do for my project?');
 
     const chatDone = page.waitForResponse(
-      res => res.url().includes('/chatkit/') && res.request().method() === 'POST',
+      res => res.url().includes('/api/chatkit/') && res.request().method() === 'POST',
       { timeout: 15000 }
     );
 
@@ -361,7 +361,7 @@ test.describe('UI First Flow — Projects → Chat → Agent Response', () => {
 
     // Intercept the real POST to agent service
     const chatApiCall = page.waitForResponse(
-      res => res.url().includes('/chatkit/') && res.request().method() === 'POST',
+      res => res.url().includes('/api/chatkit/') && res.request().method() === 'POST',
       { timeout: 15000 }
     );
 

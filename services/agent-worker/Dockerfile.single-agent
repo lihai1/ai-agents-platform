@@ -44,19 +44,16 @@ RUN cd /app/fixtures/go-rest-feature && git init -b main && \
     git config user.name "Agent Worker" && \
     git add . && git commit -m "init"
 
-# Copy startup script
+# Copy common scripts
 COPY services/agent-worker/scripts/container-start.sh /app/container-start.sh
 RUN chmod +x /app/container-start.sh
-
-# Create workspace directory
-RUN mkdir -p /workspace
+COPY services/agent-worker/scripts/clone-repo.sh /app/scripts/clone-repo.sh
+RUN chmod +x /app/scripts/clone-repo.sh
 
 # Set environment variables
-ENV PYTHONPATH=/app
 ENV WORKSPACE_PATH=/workspace
-# TODO: Make this configurable via environment variable or configuration file
-# Currently hardcoded to single-agent mode
-ENV AGENT_TYPE=single-agent
+ENV PYTHON_MODULE=single_agent_worker.main
+ENV PYTHONPATH=/app/internal/agents/single-agent/src
 
-# Run startup script
+# Default command runs the single-agent worker
 CMD ["/app/container-start.sh"]

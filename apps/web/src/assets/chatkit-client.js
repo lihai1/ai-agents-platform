@@ -119,7 +119,7 @@
       if (!this.threadId) return;
 
       try {
-        const response = await fetch(`${this.apiUrl}/chatkit/threads/${this.threadId}`, {
+        const response = await fetch(`${this.apiUrl}/api/chatkit/threads/${this.threadId}`, {
           headers: {
             'Authorization': `Bearer ${this.token}`,
             'Content-Type': 'application/json'
@@ -168,8 +168,8 @@
       this.renderMessages();
 
       try {
-        console.log('Sending message to:', `${this.apiUrl}/chatkit/`);
-        const response = await fetch(`${this.apiUrl}/chatkit/`, {
+        console.log('Sending message to:', `${this.apiUrl}/api/chatkit/`);
+        const response = await fetch(`${this.apiUrl}/api/chatkit/`, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${this.token}`,

@@ -88,7 +88,8 @@ class MockAgentRunner:
         
         # Publish failed event
         if self.nats_helper.js:
-            subject = f"agent.events.{self.run_id}.failed"
+            user_id = "test-user-123"
+            subject = f"agent.user.{user_id}.events.{self.run_id}.state.failed"
             message = {
                 "event_type": "failed",
                 "run_id": self.run_id,
@@ -109,7 +110,8 @@ class MockAgentRunner:
         
         # Publish cancelled event
         if self.nats_helper.js:
-            subject = f"agent.events.{self.run_id}.cancelled"
+            user_id = "test-user-123"
+            subject = f"agent.user.{user_id}.events.{self.run_id}.state.cancelled"
             message = {
                 "event_type": "cancelled",
                 "run_id": self.run_id,

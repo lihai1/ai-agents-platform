@@ -2,8 +2,8 @@
 from typing import Dict, Any
 from langgraph.checkpoint.memory import MemorySaver
 from internal.workflow.state import EngineeringState
-from internal.workflow.single_agent_graph import create_single_agent_run
-from internal.workflow.specialist_agent_graph import create_specialist_agent_run
+from internal.agents.single_agent.graph import create_single_agent_run
+from internal.agents.specialist.graph import create_specialist_agent_run
 import os
 
 

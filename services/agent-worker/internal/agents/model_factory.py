@@ -23,8 +23,10 @@ class FakeChatModel(BaseChatModel):
     
     def bind_tools(self, tools: List, tool_choice: Any = None, **kwargs: Any):
         """Bind tools and return self so the agent executor can invoke them"""
-        self._bound_tools = tools
-        self._call_count = 0
+        # Only reset call_count if tools actually change
+        if self._bound_tools != tools:
+            self._bound_tools = tools
+            self._call_count = 0
         return self
     
     def with_structured_output(self, schema: Any, **kwargs: Any):
@@ -122,12 +124,17 @@ class FakeChatModel(BaseChatModel):
                 call = {"name": "git_status", "args": {}}
             elif n == 3:
                 call = {"name": "git_diff", "args": {}}
+            else:
+                # Stop after 3 tool calls for write_file case
+                return None
         # backend-test-engineer runs the real test suite
         elif has("run_tests"):
             if n == 1:
                 call = {"name": "run_tests", "args": {}}
             elif n == 2:
                 call = {"name": "read_file", "args": {"file_path": "hello.go"}}
+            else:
+                return None
         # completion verifier
         elif has("git_status") and has("git_diff"):
             if n == 1:
@@ -136,12 +143,16 @@ class FakeChatModel(BaseChatModel):
                 call = {"name": "git_diff", "args": {}}
             elif n == 3:
                 call = {"name": "read_file", "args": {"file_path": "hello.go"}}
+            else:
+                return None
         # code reviewer
         elif has("git_diff") and has("read_file"):
             if n == 1:
                 call = {"name": "git_diff", "args": {}}
             elif n == 2:
                 call = {"name": "read_file", "args": {"file_path": "hello.go"}}
+            else:
+                return None
         # fallback
         elif has("read_file"):
             if n == 1:

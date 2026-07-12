@@ -1,399 +1,295 @@
 # Agentic Engineering Platform
 
-A complete agentic engineering platform with Angular UI, Go control plane, and Python agent service.
+An open-source orchestration framework for agentic AI workflows with isolated containerized environments. Currently supports Python single agents and CrewAI-based multi-agent systems.
 
-## AI-Engineered Architecture
+## Why
 
-This platform represents a breakthrough in autonomous software engineering, entirely architected and implemented by **SWE-1.6** within the **Devin IDE** environment. The system demonstrates advanced AI capabilities including:
+This project is designed for **personal, scalable, and secure use of agentic AI agents**.
 
-- **Autonomous System Design**: Multi-service architecture with Go, Python, and Angular orchestrated through intelligent decision-making
-- **Complex Workflow Orchestration**: LangGraph-based state machines managing 15 distinct agent workflow phases
-- **Specialist Agent Collaboration**: 11+ specialized AI agents working in parallel with conflict resolution
-- **Real-time Event Streaming**: SSE-based live agent activity with browser reconnection support
-- **Secure Container Isolation**: Docker-based workspace management with resource limits and security controls
+After **14 completed implementation phases**, the platform is **demo-ready** for personal home use. The core architecture, container isolation, Angular UI, NATS messaging, and multi-phase LangGraph workflow are implemented and runnable locally. It is **not yet production-ready** for enterprise deployment.
+
+The first goal is to **orchestrate agentic AI workflows in controlled isolated environments with the ability to use secured remote controls, full open-source usage, and free local LLMs** — each run is sandboxed in a Docker container, driven by NATS, accessible from a remote UI through a trusted VPN, and powered by Ollama for free local inference.
+
+The personal-use goal is to run a stable, single-user home instance that can take a chat request, run an isolated agent workflow on a git repository, and let you inspect and approve changes before they are applied.
+
+## First Goal
+
+1. **Controlled, isolated environment** — every agent workflow runs in its own Docker container with a clean `/workspace`.
+2. **Orchestration** — the control-plane listens to NATS commands, creates/terminates worker containers, and coordinates the workflow lifecycle.
+3. **Secured remote controls** — the Angular UI connects through the agent-service proxy, authenticated by JWT, so you can start, monitor, and approve workflows from anywhere over a VPN.
+4. **Full open-source usage** — the entire stack uses open-source tools, and the default LLM backend is a free local model via Ollama, so no API keys or external payments are required.
+
+## Current State & Goal for Personal Use
+
+**Current state:** `make clean-start` successfully starts PostgreSQL, NATS, the Go control-plane, the Python agent-service, and the Angular UI. You can chat in the UI, trigger a workflow, and observe state events streamed back through the agent-service. The worker now clones the selected repository into `/workspace` before the workflow starts. A custom CrewAI wrapper worker type discovers available agent projects and presents them in the chat session, so the user can pick which multi-agent project to run. The mock/fake LLM provider lets you run this without a GPU.
+
+**Personal-use goal:** A single-user home deployment where you can point the platform at your repositories, run agentic engineering tasks in isolated Docker containers, see real-time progress, and approve or reject sensitive actions before they are committed.
+
+**What is not yet done:**
+- **Budget/Cost Enforcement:** `max_tokens`/`max_cost` fields exist but enforcement during LLM calls is not yet implemented.
+- **Rate Limiting:** No rate limiting for API endpoints to prevent abuse.
+- **Kubernetes Deployment:** Only Docker Compose setup is available; Kubernetes manifests are not yet implemented.
+
+## Next Milestone
+
+Add first-class Kubernetes support alongside the existing `docker-compose` setup so the platform can be deployed to a cluster in addition to a local workstation:
+
+1. **Manifests / Helm chart** — write Deployments, StatefulSets, Services, ConfigMaps, Secrets, Ingress, and PersistentVolumeClaims for NATS, PostgreSQL, control-plane, agent-service, agent-worker, and the web UI.
+2. **Worker orchestration** — use the control-plane to spawn agent worker pods (or Kubernetes Jobs) for each workflow, with proper RBAC, resource limits, and network policies.
+3. **Observability** — add Prometheus/Grafana metrics, structured logging, and centralized tracing for all services.
+4. **GitOps / CI/CD** — automate image builds, tests, and deployments with a GitOps workflow.
+5. **Security hardening** — PodSecurityContexts, secrets management, mTLS between services, and ingress with TLS.
+
+## Future Goals
+
+**Self-Improvement** — enable the platform to edit its own code, simulate fixes, and redeploy itself — becoming a self-hosting, self-improving agentic engineering system for personal use.
+
+## Personal Goal: A Strong Starter for Microservice Systems
+
+This repository is intended to be a strong, opinionated starter for building microservice systems. It demonstrates a complete end-to-end pattern — containerized services, NATS event-driven messaging, control-plane/agent-service separation, proxy API, Angular UI, and isolated workers — that can be copied and adapted for other projects beyond agentic AI.
+
+## Key Features
+
+- **Container-Based Isolation**: Each agent workflow runs in isolated Docker containers with filesystem isolation, network restrictions, and resource limits
+- **Multi-Agent Orchestration**: Support for Python single agents and CrewAI-based multi-agent systems, including a custom wrapper worker type that discovers available agent projects and lets the user pick one from the chat session
+- **Real-Time Event Streaming**: SSE-based live agent activity monitoring with browser reconnection support
 - **Human-in-the-Loop Approval**: LangGraph interrupts for sensitive operations requiring human oversight
-
-The implementation showcases SWE-1.6's ability to reason about complex distributed systems, implement production-grade code across multiple languages, and create cohesive documentation—all autonomously within a single development session.
-
-## Architecture
-
-- **Control Plane**: Go service managing users, organizations, projects, and repositories
-  - See [services/control-plane/README.md](services/control-plane/README.md) for details
-- **Agent Service**: Python FastAPI service with ChatKit integration and LangGraph workflows
-  - See [services/agent-service/README.md](services/agent-service/README.md) for details
-- **Agent Worker**: Python worker for isolated LangGraph workflow execution
-  - See [services/agent-worker/README.md](services/agent-worker/README.md) for details
-- **Web UI**: Angular 22+ application with standalone components
+- **Enterprise-Grade Features**: Multi-tenant user/project management, authentication, and repository integration
+- **Event-Driven Architecture**: NATS JetStream with durable consumers for reliable service communication
 
 ## Quick Start
 
 ### Prerequisites
 
 - Docker and Docker Compose
-- Go 1.23+ (for local development)
-- Node.js 22+ (for local development)
-- Python 3.12+ (for local development)
-- Ollama (optional, for real LLM support)
+- Ollama (optional, for free real LLM support)
 
-### Using the Makefile
-
-The root Makefile provides convenient targets for managing the deployment:
+### Start
 
 ```bash
-# Start all services with real LLM (Ollama)
-make clean-start
-
-# Start all services with mock LLM (for testing)
-make mock-llm-start
-
-# Stop all services
-make compose-down
-
-# Build containers manually
-make build-containers
-
-# Start services (without clean)
-make compose-up
+# Build containers and start all services
+make start
 ```
 
-### Using Docker Compose Directly
+### Start Fresh (Destructive)
+
+**Warning**: `make clean-start` stops all containers and destroys persistent data (PostgreSQL volumes). Use it to clear resources and start fresh.
 
 ```bash
-# Start with real LLM (Ollama)
-docker-compose up -d
+# Stop, clean volumes, rebuild, and start
+make clean-start
+```
 
-# Start with mock LLM
-LLM_PROVIDER=fake docker-compose up -d
+### Stop
+
+```bash
+make compose-down
+```
+
+### Mock LLM
+
+```bash
+# Use fake LLM for testing without Ollama
+make mock-llm-start
 ```
 
 This will start:
-- PostgreSQL on port 5432
+- PostgreSQL on port 5433
 - Control Plane API on port 8080
 - Agent Service on port 8000
 - Web UI on port 4200
-- NATS on port 4222
+- NATS JetStream on port 4222
 
-### LLM Provider Configuration
+Open [http://localhost:4200](http://localhost:4200) and start chatting.
 
-The platform supports two LLM modes:
+## Full Free Open Source Setup for Development and API Testing
 
-1. **Real LLM (Ollama)**: Default mode using local Ollama instance
-   - Requires Ollama running locally: `ollama serve`
-   - Worker containers connect to `http://host.docker.internal:11434`
-   - Select Ollama models in the UI chat configuration
+All tools used for this project are free and open source.
 
-2. **Mock LLM (Fake)**: Testing mode with simulated responses
-   - No external dependencies
-   - Faster for testing workflows
-   - Use `make mock-llm-start` or `LLM_PROVIDER=fake docker-compose up -d`
+### Prerequisites
 
-### Local Development
+- [Docker](https://docs.docker.com/get-docker/) and [Docker Compose](https://docs.docker.com/compose/install/)
+- [Ollama](https://ollama.com/download) for local LLM inference (free, no API keys)
+- [Go 1.26+](https://go.dev/dl/) for control-plane development
+- [Node.js 22+](https://nodejs.org/) and `npm` for the Angular UI
+- [Python 3.12+](https://python.org/) and [uv](https://docs.astral.sh/uv/getting-started/installation/) for the Python services
+- `make` and `git`
 
-#### Control Plane (Go)
-
-```bash
-cd services/control-plane
-make dev
-```
-
-#### Agent Service (Python)
+### 1. Install Ollama and a Model
 
 ```bash
-cd services/agent-service
-uv sync
-uv run alembic upgrade head
-uv run uvicorn app.main:app --reload
+# Start Ollama server
+ollama serve
+
+# Pull a model (used for development/testing)
+ollama pull qwen2.5-coder:14b
 ```
 
-#### Agent Worker (Python)
+The worker containers connect to `http://host.docker.internal:11434` by default.
+
+### 2. Start the Full Stack
 
 ```bash
-cd services/agent-worker
-uv sync
-uv run python -m app.worker --run-id <run_id> --nats-url nats://localhost:4222
+make clean-start
 ```
 
-#### Web UI (Angular)
+### 3. Test the APIs
+
+The API endpoints are free to test with curl or any HTTP client.
+
+#### Agent Service (port 8000) - Single Entry Point
+
+The UI now accesses only the agent-service, which proxies requests to the control-plane as needed.
 
 ```bash
-cd apps/web
-npm install
-npm start
+# Register a user
+curl -X POST http://localhost:8000/api/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"test@example.com","password":"password"}'
+
+# Login
+curl -X POST http://localhost:8000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"test@example.com","password":"password"}'
+
+# List projects
+curl http://localhost:8000/api/projects
+
+# Health check
+curl http://localhost:8000/healthz
 ```
 
-## API Endpoints
+#### Control Plane (port 8080) - Internal Service
 
-### Control Plane (port 8080)
+The control-plane is now accessed only via the agent-service proxy for UI requests.
 
-- `GET /healthz` - Health check
-- `GET /readyz` - Readiness check
-- `POST /api/v1/auth/login` - User login
-- `POST /api/v1/auth/register` - User registration
-- `GET /api/v1/projects` - List projects
-- `POST /api/v1/projects` - Create project
-- `GET /api/v1/repositories` - List repositories
-- `POST /api/v1/repositories` - Create repository
+```bash
+# Direct access (for testing only)
+curl http://localhost:8080/api/v1/projects
+```
 
-### Agent Service (port 8000)
+### 4. Run the UI
 
-- `GET /healthz` - Health check
-- `GET /readyz` - Readiness check
-- `POST /chatkit/` - Chat endpoint with streaming
-- `GET /chatkit/threads/{thread_id}` - Get thread history
+Open [http://localhost:4200](http://localhost:4200) and register a new account.
+
+### 5. Mock LLM Mode (No GPU Required)
+
+If you do not have a GPU or want to test without Ollama:
+
+```bash
+make mock-llm-start
+```
+
+This uses the built-in fake LLM provider and runs the full stack locally without external API calls.
+
+## Home Deployment
+
+Deploy the stack on a home server or small cloud instance, expose it securely through a trusted open-source VPN, and chat with your agents from anywhere.
+
+### Example: Deploy with a VPN
+
+1. Install the framework on your home server or VPS.
+2. Start the stack:
+   ```bash
+   make start
+   ```
+3. Install a trusted open-source VPN app on your server and client devices. Examples:
+   - [WireGuard](https://www.wireguard.com/)
+   - [Tailscale](https://tailscale.com/) (open source client)
+   - [ZeroTier](https://www.zerotier.com/) (open source)
+4. Connect your client device to the VPN.
+5. Open the Web UI at `http://<server-ip>:4200` in your browser.
+
+### Fully Open Source LLM
+
+For a fully open-source home setup, deploy Ollama locally on the same server:
+
+```bash
+ollama serve
+```
+
+Worker containers connect to `http://host.docker.internal:11434` by default. Select Ollama models in the UI chat configuration.
+
+## Architecture
+
+This platform is implemented as a **monorepo with 4 microservices**:
+
+- **Control Plane** (Go): Service managing users, organizations, projects, and repositories. Accessed internally via agent-service proxy. See [services/control-plane/README.md](services/control-plane/README.md).
+- **Agent Service** (Python): FastAPI service with ChatKit integration, NATS messaging, and proxy endpoints for control-plane APIs. Acts as single entry point for all UI requests. See [services/agent-service/README.md](services/agent-service/README.md).
+- **Agent Worker** (Python): CrewAI-based worker for isolated LangGraph workflow execution, communicating only via NATS. See [services/agent-worker/README.md](services/agent-worker/README.md).
+- **Web UI** (Angular): Angular 22+ application with standalone components. All API requests routed through agent-service proxy.
+
+### Scalability Considerations
+
+The current 4-service architecture is designed for the POC and personal-use scenarios. When reaching higher scalability goals, certain responsibilities should be divided into additional microservices:
+
+- **Control Plane**: Could split into separate services for user management, project management, and repository operations
+- **Agent Service**: Could separate authentication/authorization, chat session management, and NATS command publishing into dedicated services
+- **Agent Worker**: Could split worker orchestration (container lifecycle) from workflow execution, and separate different agent framework support (LangGraph vs CrewAI) into specialized workers
+- **Observability**: Add dedicated metrics collection, logging aggregation, and tracing services
+- **Rate Limiting & Caching**: Extract rate limiting and caching logic into separate services (e.g., Redis-based rate limiter service)
+- **File Storage**: Separate blob storage service for workspace artifacts and generated files
+
+This modular design allows the platform to evolve from a single-user home deployment to a multi-tenant enterprise system by extracting services as scale demands.
 
 ## Project Structure
 
 ```
-ai-platform-swe-1.6-gen/
+ai-agents-platform/
 ├── apps/
-│   └── web/                 # Angular 22+ UI application
-│       ├── src/
-│       │   ├── app/
-│       │   │   ├── core/           # Core services (HTTP, auth, config)
-│       │   │   ├── auth/           # Authentication module
-│       │   │   ├── projects/       # Project management
-│       │   │   ├── chat/           # Chat interface with ChatKit
-│       │   │   ├── activity/       # Agent activity timeline
-│       │   │   ├── artifact-viewer/ # Artifact display (diffs, reports)
-│       │   │   ├── diff-viewer/    # Code diff viewer
-│       │   │   ├── approval-dialog/ # Human approval dialog
-│       │   │   └── run-context/    # Run metadata display
-│       │   └── main.ts
-│       ├── package.json
-│       ├── angular.json
-│       └── Dockerfile
+│   └── web/                 # Angular 22+ UI
 ├── services/
-│   ├── control-plane/       # Go 1.23+ control plane service
-│   │   ├── cmd/
-│   │   │   └── server/
-│   │   │       └── main.go        # Service entry point
-│   │   ├── internal/
-│   │   │   ├── config/            # Configuration management
-│   │   │   ├── db/                # Database connection
-│   │   │   ├── handlers/          # HTTP handlers
-│   │   │   ├── middleware/        # HTTP middleware (auth, CORS)
-│   │   │   ├── models/            # Data models
-│   │   │   ├── repository/        # Data access layer
-│   │   │   ├── service/           # Business logic
-│   │   │   └── orchestrator/      # Container orchestration
-│   │   ├── migrations/            # Database migrations
-│   │   ├── Makefile
-│   │   ├── go.mod
-│   │   └── Dockerfile
-│   └── agent-service/       # Python 3.12+ agent service (HTTP API + messaging layer)
-│       ├── app/
-│       │   └── main.py            # FastAPI application
-│       ├── internal/
-│       │   ├── agents/            # Shared specialist agents library
-│       │   │   ├── factory.py     # Agent creation
-│       │   │   ├── schemas.py     # Pydantic schemas
-│       │   │   ├── specialists.py # Planning agents
-│       │   │   ├── implementers.py # Implementation agents
-│       │   │   └── validators.py  # Validation agents
-│       │   ├── chatkit/           # ChatKit integration
-│       │   │   ├── router.py      # Chat endpoints
-│       │   │   ├── server.py      # AegisChatKitServer (SSE streaming)
-│       │   │   ├── nats_bridge.py # NATS event subscription bridge
-│       │   │   ├── event_mapper.py # Event mapping to ChatKit protocol
-│       │   │   ├── context.py     # Request context helpers
-│       │   │   └── store.py       # PostgreSQL thread/message store
-│       │   ├── config.py          # Configuration
-│       │   ├── db.py              # Database connection
-│       │   ├── event_streams.py   # SSE event streaming infrastructure
-│       │   ├── handlers/         # NATS message handlers
-│       │   ├── messaging/         # NATS messaging
-│       │   │   └── nats.py        # NATS client
-│       │   ├── models.py          # SQLAlchemy models
-│       │   ├── skills/            # Skill system
-│       │   │   ├── registry.py    # Skill loader
-│       │   │   └── snapshots.py   # Skill versioning
-│       │   └── tools/             # Agent tools
-│       │       ├── repository.py  # Read-only repo tools
-│       │       └── workspace.py   # Workspace tools
-│       ├── migrations/            # Alembic migrations
-│       ├── tests/                 # Test suites
-│       │   ├── e2e/              # End-to-end tests
-│       │   ├── security/         # Security tests
-│       │   └── fixtures/         # Test repositories
-│       ├── .agents/               # Skill definitions
-│       │   ├── minimal/          # Minimal skill set
-│       │   └── full/             # Full skill set
-│       ├── pyproject.toml
-│       ├── alembic.ini
-│       └── Dockerfile
-│   └── agent-worker/        # Python worker for isolated workflow execution
-│       ├── app/             # Worker application
-│       ├── internal/        # Worker internals
-│       ├── tests/           # Worker tests
-│       ├── Dockerfile.worker
-│       └── Makefile
-├── deploy/                  # Deployment configurations
-│   ├── docker-compose.yml   # Docker Compose orchestration
-│   └── kubernetes/          # Kubernetes manifests (future)
-├── contracts/               # API contracts and schemas
-├── docs/                    # Documentation
-│   ├── architecture/        # Architecture diagrams
-│   ├── operations/          # Operational documentation
-│   └── threat-model/        # Security threat model
-├── PROGRESS.md             # Implementation progress
-├── README.md               # This file
-└── IMPLEMENTATION_PLAN.md   # Detailed implementation plan
+│   ├── control-plane/       # Go 1.26+ control plane service
+│   ├── agent-service/       # Python 3.12+ API and messaging
+│   └── agent-worker/        # Python worker for isolated workflows
+├── shared/                  # Shared utilities and test tools
+├── docs/                    # Documentation and diagrams
+├── PROGRESS.md              # Implementation progress
+├── IMPLEMENTATION_PLAN.md   # Detailed implementation plan
+└── README.md                # This file
 ```
 
-## Implementation Phases
+## Documentation
 
-1. ✅ Phase 1: Foundation (Go + Infrastructure)
-2. ✅ Phase 2: Angular UI + Python ChatKit
-3. ✅ Phase 3: LangGraph Workflow Skeleton
-4. ✅ Phase 4: Skills and Read-Only Agents
-5. ✅ Phase 5: Workspace Isolation
-6. ✅ Phase 6: Implementation Agents
-7. ✅ Phase 7: Testing, Review, Verification
-8. ✅ Phase 8: Human Approval
-9. ✅ Phase 9: Activity and Artifact UX
-10. ✅ Phase 10: NATS Worker Separation
-11. ✅ Phase 11: Hardening and Evaluation
-12. ✅ Phase 12: Agent Container Creation Flow
-13. ✅ Phase 13: Architecture Refactoring - Service Separation
+- [docs/README.md](docs/README.md) - Architecture diagrams and how to regenerate them
+- [docs/COMPLETE_FLOW.md](docs/COMPLETE_FLOW.md) - Complete chat-to-agent flow
+- [PROGRESS.md](PROGRESS.md) - Implementation phases, architecture refactoring, and current status
+- [services/control-plane/README.md](services/control-plane/README.md) - Control plane service
+- [services/agent-service/README.md](services/agent-service/README.md) - Agent service
+- [services/agent-worker/README.md](services/agent-worker/README.md) - Agent worker
 
-See [PROGRESS.md](PROGRESS.md) for detailed implementation status.
+## Screenshots
 
-## Agent Container Creation Flow
+### UI
 
-The platform now supports complete end-to-end agent container creation with a simplified control flow:
+![Chat Interface](docs/screenshots/chat.png)
+![Project Selection](docs/screenshots/projects.png)
 
-1. **User Chat Message** → Agent Service receives chat request via `POST /chatkit/`
-2. **SSE Stream Initiated** → `AegisChatKitServer.respond()` returns an SSE stream
-3. **Container Creation** → Agent Service publishes `agent.control.{run_id}.start` to NATS with all run parameters
-4. **Control Plane** → Receives `agent.control.{run_id}.start`, creates container with environment variables
-5. **Worker Auto-Start** → Container starts, worker reads run parameters from environment and auto-starts workflow
-6. **State Events** → Worker publishes state events to `agent.events.{run_id}.{event_type}`
-7. **Event Streaming** → Agent Service receives events via global event stream and yields as ChatKit SSE events
-8. **UI Rendering** → Angular `chat.component.ts` parses SSE events and updates the chat UI
-
-### Control Signals
-
-All control signals use the unified `agent.control.*` pattern:
-- `agent.control.{run_id}.start` - Start run with all parameters (user_id, task, project_id, etc.)
-- `agent.control.{run_id}.cancel` - Cancel run (stop & remove container)
-- `agent.control.{run_id}.resume` - Resume run (recreate container)
-
-### Worker Auto-Start
-
-The worker no longer listens to NATS commands. Instead:
-- Worker reads run parameters from environment variables (USER_ID, TASK, PROJECT_ID, etc.)
-- Worker auto-starts the workflow immediately on container startup
-- This eliminates the need for a separate `run.start` command
-
-### Event Streaming
-
-Worker publishes state events to:
-- `agent.events.{run_id}.{event_type}` - State transition events
-
-Agent Service subscribes to global event stream and forwards to UI via SSE.
-
-### Current Limitations
-
-- **Memory Checkpointer**: Using in-memory checkpointer instead of PostgreSQL (temporary workaround for LangGraph API issues)
-- **Mock Docker Mode**: Container creation is simulated when `MOCK_DOCKER=true` (no actual Docker containers)
-- **Mock Responses**: The `mock-worker` returns predefined responses (no actual LLM calls)
-- **Icon Validation**: Fixed invalid `loader` icon literal by mapping it to `agent`
-
-These limitations are acceptable for testing the message flow and can be addressed in future iterations.
-
-## Phase 13: Architecture Refactoring - Service Separation
-
-In Phase 13, the architecture was refactored to properly separate concerns between the agent-service and agent-worker:
-
-### Key Changes
-
-- **Removed LangGraph workflow execution code from agent-service**: All workflow execution logic (graph, nodes, router, state, checkpointer, approvals) was moved to agent-worker
-- **agent-service now handles**: HTTP API, NATS messaging, SSE streaming, PostgreSQL store
-- **agent-worker now handles**: LangGraph workflow execution, real agent implementations, workspace operations
-- **Shared library**: `internal/agents/` remains a shared library used by both services for specialist agents
-- **Event streaming infrastructure**: Moved `event_streams.py` from `internal/workflow/` to `internal/event_streams.py` for clarity
-
-### Architecture Benefits
-
-- **Clear separation of concerns**: API layer (agent-service) is completely separate from execution layer (agent-worker)
-- **Scalability**: Worker processes can be scaled independently of the API service
-- **Maintainability**: Workflow execution code is isolated to the worker service
-- **Testing**: Each service can be tested independently
-
-### Message Flow
-
-1. **User Chat Message** → Agent Service receives chat request via `POST /chatkit/`
-2. **SSE Stream Initiated** → `AegisChatKitServer.respond()` returns an SSE stream
-3. **Container Creation** → Agent Service publishes `agent.control.{run_id}.start` to NATS with all run parameters
-4. **Control Plane** → Receives `agent.control.{run_id}.start`, creates container with environment variables
-5. **Worker Auto-Start** → Container starts, worker reads run parameters from environment and auto-starts workflow
-6. **State Events** → Worker publishes state events to `agent.events.{run_id}.{event_type}`
-7. **Event Streaming** → Agent Service receives events via global event stream and yields as ChatKit SSE events
-8. **UI Rendering** → Angular `chat.component.ts` parses SSE events and updates the chat UI
-
-## Architecture Diagrams
-
-The platform includes comprehensive UML diagrams documenting the system architecture and message flows:
-
-### Component Diagram
+### Architecture Diagrams
 
 ![Architecture Component Diagram](docs/svg/architecture-component-diagram.svg)
 
-### Sequence Diagrams
-
-#### Chat Lifecycle
 ![Chat Lifecycle Sequence](docs/svg/sequence-chat-lifecycle.svg)
 
-#### ChatKit Chat Integration
-![ChatKit Chat Sequence](docs/svg/sequence-chatkit-chat.svg)
-
-#### Workflow Trigger
-![Workflow Trigger Sequence](docs/svg/sequence-workflow-trigger.svg)
-
-#### LangGraph Workflow
-![LangGraph Workflow Sequence](docs/svg/sequence-langgraph-workflow.svg)
-
-#### NATS Messaging
 ![NATS Messaging Sequence](docs/svg/sequence-nats-messaging.svg)
 
-#### Event Streaming
-![Event Streaming Sequence](docs/svg/sequence-event-streaming.svg)
+## Development
 
-#### Human Approval
-![Human Approval Sequence](docs/svg/sequence-human-approval.svg)
+See service-specific READMEs for local development instructions.
 
-#### Cancellation Flow
-![Cancellation Sequence](docs/svg/sequence-cancellation.svg)
+## About the Author
 
-### Source Files
+**Lihai Aqua** is a senior software engineer focused on distributed systems, Go, Kubernetes, and cloud-native architecture. This work reflects an approach to fast, quality-driven development — designing cloud and cloud-native applications on Kubernetes, solving problems efficiently with the right tools, and applying deep distributed-systems expertise across related domains throughout the full software lifecycle.
 
-The Mermaid source files are available in the `docs/` directory for editing:
-- [docs/architecture-component-diagram.mmd](docs/architecture-component-diagram.mmd)
-- [docs/sequence-chat-lifecycle.mmd](docs/sequence-chat-lifecycle.mmd)
-- [docs/sequence-chatkit-chat.mmd](docs/sequence-chatkit-chat.mmd)
-- [docs/sequence-workflow-trigger.mmd](docs/sequence-workflow-trigger.mmd)
-- [docs/sequence-langgraph-workflow.mmd](docs/sequence-langgraph-workflow.mmd)
-- [docs/sequence-nats-messaging.mmd](docs/sequence-nats-messaging.mmd)
-- [docs/sequence-event-streaming.mmd](docs/sequence-event-streaming.mmd)
-- [docs/sequence-human-approval.mmd](docs/sequence-human-approval.mmd)
-- [docs/sequence-cancellation.mmd](docs/sequence-cancellation.mmd)
+### Development Stack Summary
+- **Languages:** Go (primary), Python, Bash, Java
+- **Frontend & Fullstack:** Angular, TypeScript, JavaScript
+- **Infrastructure:** Kubernetes, Docker, Helm, Linux, Azure, AWS
+- **Messaging & Data:** NATS, Kafka, PostgreSQL
+- **APIs:** gRPC, REST, Protobuf, OpenAPI
+- **Automation & CI/CD:** Jenkins, Git, Makefiles, CI/CD Pipelines
+- **Practices:** System Design, TDD, E2E Testing, PR Quality Gates, Production Stability
 
-### Regenerating Diagrams
-
-To regenerate SVG images after modifying the Mermaid source files:
-
-```bash
-# Install mermaid-cli (first time only)
-npx @mermaid-js/mermaid-cli --version
-
-# Regenerate all diagrams
-npx @mermaid-js/mermaid-cli -i docs/architecture-component-diagram.mmd -o docs/svg/architecture-component-diagram.svg
-npx @mermaid-js/mermaid-cli -i docs/sequence-chat-lifecycle.mmd -o docs/svg/sequence-chat-lifecycle.svg
-npx @mermaid-js/mermaid-cli -i docs/sequence-chatkit-chat.mmd -o docs/svg/sequence-chatkit-chat.svg
-npx @mermaid-js/mermaid-cli -i docs/sequence-workflow-trigger.mmd -o docs/svg/sequence-workflow-trigger.svg
-npx @mermaid-js/mermaid-cli -i docs/sequence-langgraph-workflow.mmd -o docs/svg/sequence-langgraph-workflow.svg
-npx @mermaid-js/mermaid-cli -i docs/sequence-nats-messaging.mmd -o docs/svg/sequence-nats-messaging.svg
-npx @mermaid-js/mermaid-cli -i docs/sequence-event-streaming.mmd -o docs/svg/sequence-event-streaming.svg
-npx @mermaid-js/mermaid-cli -i docs/sequence-human-approval.mmd -o docs/svg/sequence-human-approval.svg
-npx @mermaid-js/mermaid-cli -i docs/sequence-cancellation.mmd -o docs/svg/sequence-cancellation.svg
-```
+- Email: lihai2511@gmail.com
+- LinkedIn: [linkedin.com/in/lihai-aqua](https://www.linkedin.com/in/lihai-aqua)
+- GitHub: [github.com/lihai1](https://github.com/lihai1)

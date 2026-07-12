@@ -1,11 +1,12 @@
-.PHONY: compose-up compose-down clean-start test-ui help clean build-containers mock-llm-start
+.PHONY: start compose-up compose-down clean-start test-ui help clean build-containers mock-llm-start
 
 # Default target
 help:
 	@echo "Available targets:"
+	@echo "  make start          - Build containers and start all services"
 	@echo "  make compose-up     - Build containers manually and start services"
 	@echo "  make compose-down   - Stop and remove all containers"
-	@echo "  make clean-start    - Stop deployment, clean volumes, and start fresh"
+	@echo "  make clean-start    - Stop deployment, clean volumes, and start fresh (destructive)"
 	@echo "  make mock-llm-start  - Clean and start with mock LLM (LLM_PROVIDER=fake)"
 	@echo "  make test-ui        - Run UI e2e tests"
 	@echo "  make help           - Show this help message"
@@ -15,6 +16,12 @@ clean:
 	@echo "Stopping deployment and Cleaning volumes..."
 	docker-compose down -v --remove-orphans || true
 	docker ps -q | xargs -r docker kill || true
+
+# Build and start all services
+start: build-containers
+	@echo "Starting services..."
+	docker-compose up -d
+	@echo "Services started successfully"
 
 # Build containers manually and start services
 compose-up: build-containers
@@ -45,8 +52,9 @@ build-containers:
 	@echo "Building containers manually..."
 	docker build -t ai-platform-swe-16-gen-control-plane ./services/control-plane
 	docker build -t ai-platform-swe-16-gen-agent-service ./services/agent-service
-	docker build -t ai-platform-swe-16-gen-agent-worker -t agentic-agent-worker:latest . -f ./services/agent-worker/Dockerfile.worker
+	docker build -t agentic-specialist-agent-worker:latest . -f ./services/agent-worker/Dockerfile.specialist
 	docker build -t agentic-single-agent-worker:latest . -f ./services/agent-worker/Dockerfile.single-agent
+	docker build -t agentic-crewai-agent-worker:latest . -f ./services/agent-worker/Dockerfile.crewai
 	docker build -t ai-platform-swe-16-gen-web ./apps/web
 	@echo "All containers built successfully"
 

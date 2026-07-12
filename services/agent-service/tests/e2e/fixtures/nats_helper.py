@@ -29,21 +29,21 @@ class NATSTestHelper:
             # Create streams if they don't exist
             try:
                 await self.js.add_stream(
-                    name="AGENT_COMMANDS",
-                    subjects=["agent.chat.>"],
-                    description="Agent command stream",
+                    name="AGENT_CHAT",
+                    subjects=["agent.user.*.chat.>"],
+                    description="Agent chat stream for user events",
                     retention="limits",
                     max_age=86400,
                     storage="file",
                     allow_direct=True,
                 )
             except Exception as e:
-                logger.warning(f"Command stream may already exist: {e}")
+                logger.warning(f"Chat stream may already exist: {e}")
             
             try:
                 await self.js.add_stream(
                     name="AGENT_EVENTS",
-                    subjects=["agent.events.>"],
+                    subjects=["agent.user.*.events.>"],
                     description="Agent event stream",
                     retention="limits",
                     max_age=86400,
@@ -58,12 +58,12 @@ class NATSTestHelper:
             logger.error(f"Failed to connect to NATS: {e}")
             raise
     
-    async def subscribe_to_events(self, run_id: str) -> None:
+    async def subscribe_to_events(self, run_id: str, user_id: str = "test-user-123") -> None:
         """Subscribe to all events for a specific run"""
         if not self.nc:
             raise RuntimeError("NATS not connected")
         
-        subject = f"agent.events.{run_id}.>"
+        subject = f"agent.user.{user_id}.events.{run_id}.state.>"
         self.collected_events[run_id] = []
         
         async def event_handler(msg):
@@ -82,8 +82,8 @@ class NATSTestHelper:
         self.subscriptions.append(sub)
         logger.info(f"Subscribed to events for run {run_id}")
     
-    async def subscribe_to_chat_start(self) -> None:
-        """Subscribe to chat.start messages"""
+    async def subscribe_to_chat_start(self, run_id: str = None) -> None:
+        """Subscribe to agent.control.{run_id}.start messages (current flow)"""
         if not self.nc:
             raise RuntimeError("NATS not connected")
         
@@ -92,25 +92,26 @@ class NATSTestHelper:
         async def chat_start_handler(msg):
             try:
                 data = json.loads(msg.data.decode())
-                logger.info(f"[NATS TEST] Received chat.start: {data}")
+                logger.info(f"[NATS TEST] Received control start: {data}")
                 self.collected_events["chat_start"].append({
                     "subject": msg.subject,
                     "data": data,
                     "timestamp": asyncio.get_event_loop().time()
                 })
             except Exception as e:
-                logger.error(f"[NATS TEST] Error processing chat.start: {e}")
+                logger.error(f"[NATS TEST] Error processing control start: {e}")
         
-        sub = await self.nc.subscribe("chat.start", cb=chat_start_handler)
+        # Subscribe to agent.control.> to catch all control messages
+        sub = await self.nc.subscribe("agent.control.>", cb=chat_start_handler)
         self.subscriptions.append(sub)
-        logger.info("Subscribed to chat.start messages")
+        logger.info("Subscribed to agent.control.> messages")
     
-    async def publish_agent_started(self, run_id: str) -> str:
+    async def publish_agent_started(self, run_id: str, user_id: str = "test-user-123") -> str:
         """Publish agent.started event"""
         if not self.js:
             raise RuntimeError("NATS JetStream not connected")
         
-        subject = f"agent.events.{run_id}.started"
+        subject = f"agent.user.{user_id}.events.{run_id}.state.started"
         message = {
             "event_type": "started",
             "run_id": run_id,
@@ -122,12 +123,12 @@ class NATSTestHelper:
         logger.info(f"Published agent.started for run {run_id}")
         return run_id
     
-    async def publish_agent_completed(self, run_id: str, answer: str) -> str:
+    async def publish_agent_completed(self, run_id: str, answer: str, user_id: str = "test-user-123") -> str:
         """Publish agent.completed event"""
         if not self.js:
             raise RuntimeError("NATS JetStream not connected")
         
-        subject = f"agent.events.{run_id}.completed"
+        subject = f"agent.user.{user_id}.events.{run_id}.state.completed"
         message = {
             "event_type": "completed",
             "run_id": run_id,
@@ -140,12 +141,12 @@ class NATSTestHelper:
         logger.info(f"Published agent.completed for run {run_id}")
         return run_id
     
-    async def publish_progress(self, run_id: str, message: str) -> str:
+    async def publish_progress(self, run_id: str, message: str, user_id: str = "test-user-123") -> str:
         """Publish progress event"""
         if not self.js:
             raise RuntimeError("NATS JetStream not connected")
         
-        subject = f"agent.events.{run_id}.progress"
+        subject = f"agent.user.{user_id}.events.{run_id}.state.progress"
         event_message = {
             "event_type": "progress",
             "run_id": run_id,
@@ -173,15 +174,18 @@ class NATSTestHelper:
         return None
     
     async def wait_for_chat_start(self, timeout: int = 10) -> Optional[Dict]:
-        """Wait for chat.start message"""
+        """Wait for agent.control.{run_id}.start message (current flow)"""
         start_time = asyncio.get_event_loop().time()
         
         while (asyncio.get_event_loop().time() - start_time) < timeout:
             if "chat_start" in self.collected_events and self.collected_events["chat_start"]:
-                return self.collected_events["chat_start"][0]
+                # Filter for .start messages only
+                for event in self.collected_events["chat_start"]:
+                    if event["subject"].endswith(".start"):
+                        return event
             await asyncio.sleep(0.1)
         
-        logger.warning("Timeout waiting for chat.start message")
+        logger.warning("Timeout waiting for agent.control.{run_id}.start message")
         return None
     
     def get_events(self, run_id: str) -> list:

@@ -15,20 +15,22 @@ async def get_event_stream(chat_id: str) -> asyncio.Queue:
     async with streams_lock:
         if chat_id not in event_streams:
             event_streams[chat_id] = asyncio.Queue(maxsize=1000)
-            print(f"Created new event stream for chat_id: {chat_id}")
+            print(f"Created new event stream for chat_id: {chat_id}, queue id: {id(event_streams[chat_id])}")
         else:
-            print(f"Reusing existing event stream for chat_id: {chat_id}")
+            print(f"Reusing existing event stream for chat_id: {chat_id}, queue id: {id(event_streams[chat_id])}")
         return event_streams[chat_id]
 
 
 async def push_event(chat_id: str, event: dict) -> None:
-    """Push an event to the chat's event queue"""
+    """Push an event to the chat's event queue
+
+    Silently drops event if the event stream for chat_id does not exist.
+    """
     async with streams_lock:
-        # Auto-create event stream if it doesn't exist
         if chat_id not in event_streams:
-            event_streams[chat_id] = asyncio.Queue(maxsize=1000)
-            print(f"Auto-created event stream for chat_id: {chat_id}")
-        
+            print(f"Event stream not found for chat_id: {chat_id}. Dropping event: {event.get('event_type')}")
+            return
+
         try:
             # Non-blocking put, drop if queue is full
             event_streams[chat_id].put_nowait(event)

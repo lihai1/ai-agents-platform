@@ -102,8 +102,8 @@ def describe_nats_subject_patterns():
         assert hasattr(NATSMessaging, 'subscribe_to_chat_events')
         
         print("   ✓ NATS subject pattern methods available")
-        print("   ✓ Chat-based subjects: agent.chat.{chat_id}.{state}")
-        print("   ✓ Chat lifecycle subjects: chat.start, chat.close")
+        print("   ✓ Chat-based subjects: agent.user.{user_id}.chat.{run_id}.events")
+        print("   ✓ Chat lifecycle subjects: agent.control.{run_id}.start, agent.control.{run_id}.close")
 
 
 def describe_control_plane_nats_integration():

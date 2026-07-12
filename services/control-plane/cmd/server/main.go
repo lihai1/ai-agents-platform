@@ -138,12 +138,7 @@ func main() {
 	// api.HandleFunc("/containers/{chat_id}", chatContainerHandler.RemoveContainer).Methods("DELETE")
 
 	// Initialize NATS client
-	natsURL := os.Getenv("NATS_URL")
-	if natsURL == "" {
-		natsURL = "nats://localhost:4222"
-	}
-
-	nc, err := nats.Connect(natsURL)
+	nc, err := nats.Connect(cfg.NATSURL)
 	if err != nil {
 		log.Fatalf("Failed to connect to NATS: %v", err)
 	}
@@ -159,8 +154,8 @@ func main() {
 	_, err = nc.Subscribe("agent.control.>", func(msg *nats.Msg) {
 		if strings.HasSuffix(msg.Subject, ".start") {
 			handlers.HandleChatStart(msg, chatContainerService, containerManager, repoRepo, nc, js)
-		} else if strings.HasSuffix(msg.Subject, ".cancel") {
-			handlers.HandleChatCancel(msg, chatContainerService, containerManager)
+		} else if strings.HasSuffix(msg.Subject, ".close") {
+			handlers.HandleChatClose(msg, chatContainerService, containerManager)
 		} else if strings.HasSuffix(msg.Subject, ".resume") {
 			handlers.HandleChatResume(msg, chatContainerService, containerManager, repoRepo, nc, js)
 		}
@@ -169,15 +164,7 @@ func main() {
 		log.Fatalf("Failed to subscribe to agent.control.>: %v", err)
 	}
 
-	// Subscribe to chat close messages
-	_, err = nc.Subscribe("agent.chat.close", func(msg *nats.Msg) {
-		handlers.HandleChatClose(msg, chatContainerService, containerManager)
-	})
-	if err != nil {
-		log.Fatalf("Failed to subscribe to agent.chat.close: %v", err)
-	}
-
-	log.Println("Subscribed to NATS agent.control.> (start/cancel/resume) and agent.chat.close subjects")
+	log.Println("Subscribed to NATS agent.control.> (start/close/resume) subjects")
 
 	// Wrap router with CORS handler that handles OPTIONS at server level
 	handler := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {

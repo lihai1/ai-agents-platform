@@ -112,22 +112,21 @@ func (m *Manager) createContainerWithConfig(repoConfig RepositoryConfig, llmConf
 		ContainerName: containerName,
 		Network:       containerConfig.Network,
 		EnvVars: map[string]string{
-			"RUN_ID":            repoConfig.RunID,
-			"REPOSITORY_URL":    repoConfig.RepositoryURL,
-			"BRANCH":            repoConfig.Branch,
-			"NATS_URL":          containerConfig.NATSURL,
-			"MOCK_MODE":         os.Getenv("MOCK_MODE"),
-			"LLM_PROVIDER":      llmConfig.LLMProvider,
-			"MODEL_NAME":        llmConfig.ModelName,
-			"API_KEY":           llmConfig.APIKey,
-			"USER_ID":           "",  // Will be set from chat message
-			"PROJECT_ID":        "",  // Will be set from chat message
-			"REPOSITORY_ID":     "",  // Will be set from chat message
-			"TASK":              "",  // Will be set from chat message
-			"CHATKIT_THREAD_ID": "",  // Will be set from chat message
-			"MAX_TOKENS":        "",  // Will be set from chat message
-			"MAX_COST":          "",  // Will be set from chat message
-			"MAX_REPAIR_COUNT":  "2", // Default value
+			"RUN_ID":           repoConfig.RunID,
+			"REPOSITORY_URL":   repoConfig.RepositoryURL,
+			"BRANCH":           repoConfig.Branch,
+			"NATS_URL":         containerConfig.NATSURL,
+			"MOCK_MODE":        os.Getenv("MOCK_MODE"),
+			"LLM_PROVIDER":     llmConfig.LLMProvider,
+			"MODEL_NAME":       llmConfig.ModelName,
+			"API_KEY":          llmConfig.APIKey,
+			"USER_ID":          "",  // Will be set from chat message
+			"PROJECT_ID":       "",  // Will be set from chat message
+			"REPOSITORY_ID":    "",  // Will be set from chat message
+			"TASK":             "",  // Will be set from chat message
+			"MAX_TOKENS":       "",  // Will be set from chat message
+			"MAX_COST":         "",  // Will be set from chat message
+			"MAX_REPAIR_COUNT": "2", // Default value
 		},
 	}
 
@@ -195,22 +194,21 @@ func (m *Manager) createContainerWithConfigAndParams(repoConfig RepositoryConfig
 		ContainerName: containerName,
 		Network:       containerConfig.Network,
 		EnvVars: map[string]string{
-			"RUN_ID":            repoConfig.RunID,
-			"REPOSITORY_URL":    repoConfig.RepositoryURL,
-			"BRANCH":            repoConfig.Branch,
-			"NATS_URL":          containerConfig.NATSURL,
-			"MOCK_MODE":         "false",
-			"LLM_PROVIDER":      llmConfig.LLMProvider,
-			"MODEL_NAME":        llmConfig.ModelName,
-			"API_KEY":           llmConfig.APIKey,
-			"USER_ID":           runParams.UserID,
-			"PROJECT_ID":        runParams.ProjectID,
-			"REPOSITORY_ID":     runParams.RepositoryID,
-			"TASK":              runParams.Task,
-			"CHATKIT_THREAD_ID": runParams.ChatkitThreadID,
-			"MAX_TOKENS":        fmt.Sprintf("%d", runParams.MaxTokens),
-			"MAX_COST":          fmt.Sprintf("%f", runParams.MaxCost),
-			"MAX_REPAIR_COUNT":  fmt.Sprintf("%d", runParams.MaxRepairCount),
+			"RUN_ID":           repoConfig.RunID,
+			"REPOSITORY_URL":   repoConfig.RepositoryURL,
+			"BRANCH":           repoConfig.Branch,
+			"NATS_URL":         containerConfig.NATSURL,
+			"MOCK_MODE":        "false",
+			"LLM_PROVIDER":     llmConfig.LLMProvider,
+			"MODEL_NAME":       llmConfig.ModelName,
+			"API_KEY":          llmConfig.APIKey,
+			"USER_ID":          runParams.UserID,
+			"PROJECT_ID":       runParams.ProjectID,
+			"REPOSITORY_ID":    runParams.RepositoryID,
+			"TASK":             runParams.Task,
+			"MAX_TOKENS":       fmt.Sprintf("%d", runParams.MaxTokens),
+			"MAX_COST":         fmt.Sprintf("%f", runParams.MaxCost),
+			"MAX_REPAIR_COUNT": fmt.Sprintf("%d", runParams.MaxRepairCount),
 		},
 	}
 
@@ -280,11 +278,11 @@ func (m *Manager) CreateSingleAgentContainer(repoConfig RepositoryConfig, llmCon
 // CreateSpecialistAgentContainer creates a new container for a specialist agent (multi-agent) worker
 func (m *Manager) CreateSpecialistAgentContainer(repoConfig RepositoryConfig, llmConfig LLMConfig) (*ChatContainerInfo, error) {
 	containerConfig := WorkerContainerConfig{
-		ImageName:           "agentic-agent-worker:latest",
+		ImageName:           "agentic-specialist-agent-worker:latest",
 		ContainerNamePrefix: "automated-specialists-run",
 		Network:             "agentic-network",
 		NATSURL:             "nats://nats:4222",
-		AgentType:           "", // No AGENT_TYPE for specialist mode
+		AgentType:           "specialist",
 	}
 	return m.createContainerWithConfig(repoConfig, llmConfig, containerConfig)
 }
@@ -319,11 +317,23 @@ func (m *Manager) CreateSingleAgentContainerWithParams(repoConfig RepositoryConf
 // CreateSpecialistAgentContainerWithParams creates a new container for a specialist agent (multi-agent) worker with run parameters
 func (m *Manager) CreateSpecialistAgentContainerWithParams(repoConfig RepositoryConfig, llmConfig LLMConfig, runParams RunParameters) (*ChatContainerInfo, error) {
 	containerConfig := WorkerContainerConfig{
-		ImageName:           "agentic-agent-worker:latest",
+		ImageName:           "agentic-specialist-agent-worker:latest",
 		ContainerNamePrefix: "automated-specialists-run",
 		Network:             "agentic-network",
 		NATSURL:             "nats://nats:4222",
-		AgentType:           "multi-agent",
+		AgentType:           "specialist",
+	}
+	return m.createContainerWithConfigAndParams(repoConfig, llmConfig, containerConfig, runParams)
+}
+
+// CreateCrewAIContainerWithParams creates a new container for a CrewAI worker with run parameters
+func (m *Manager) CreateCrewAIContainerWithParams(repoConfig RepositoryConfig, llmConfig LLMConfig, runParams RunParameters) (*ChatContainerInfo, error) {
+	containerConfig := WorkerContainerConfig{
+		ImageName:           "agentic-crewai-agent-worker:latest",
+		ContainerNamePrefix: "automated-crewai-run",
+		Network:             "agentic-network",
+		NATSURL:             "nats://nats:4222",
+		AgentType:           "crewai",
 	}
 	return m.createContainerWithConfigAndParams(repoConfig, llmConfig, containerConfig, runParams)
 }

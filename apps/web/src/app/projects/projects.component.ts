@@ -1,4 +1,4 @@
-import { Component, OnInit } from '@angular/core';
+import { Component, OnInit, NgZone } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
@@ -27,12 +27,13 @@ interface Repository {
         <h1>Agentic Engineering Platform</h1>
         <p class="subtitle">AI-powered software development automation</p>
       </header>
-      
+
       <div class="actions">
         <button class="btn btn-primary" (click)="showCreateModal = true">+ New Project</button>
       </div>
 
       <div *ngIf="loading" class="loading-state">
+        <div class="loading-spinner"></div>
         <p>Loading projects...</p>
       </div>
 
@@ -65,11 +66,11 @@ interface Repository {
       </ng-template>
 
       <!-- Repository Selection Modal -->
-      <div *ngIf="showRepoModal" class="modal-overlay" (click)="skipRepository()">
+      <div *ngIf="showRepoModal" class="modal-overlay" (click)="closeRepoModal()">
         <div class="modal" (click)="$event.stopPropagation()">
           <div class="modal-header">
             <h2>Add Repository (Optional)</h2>
-            <button class="close-btn" (click)="skipRepository()">×</button>
+            <button class="close-btn" (click)="closeRepoModal()">×</button>
           </div>
           <div class="modal-body">
             <p class="info-text">Connect a GitHub repository to your project or skip to start chatting.</p>
@@ -95,6 +96,7 @@ interface Repository {
                   id="repoName" 
                   type="text" 
                   [(ngModel)]="newRepo.name" 
+                  (ngModelChange)="onRepoNameChange()"
                   placeholder="my-repo"
                   class="form-input"
                 >
@@ -105,6 +107,7 @@ interface Repository {
                   id="gitUrl" 
                   type="text" 
                   [(ngModel)]="newRepo.git_url" 
+                  (ngModelChange)="onGitUrlChange()"
                   placeholder="https://github.com/username/repo.git"
                   class="form-input"
                 >
@@ -115,6 +118,7 @@ interface Repository {
                   id="branch" 
                   type="text" 
                   [(ngModel)]="newRepo.branch" 
+                  (ngModelChange)="onBranchChange()"
                   placeholder="main"
                   class="form-input"
                 >
@@ -134,11 +138,11 @@ interface Repository {
       </div>
 
       <!-- Create Project Modal -->
-      <div *ngIf="showCreateModal" class="modal-overlay" (click)="showCreateModal = false">
+      <div *ngIf="showCreateModal" class="modal-overlay" (click)="closeCreateModal()">
         <div class="modal" (click)="$event.stopPropagation()">
           <div class="modal-header">
             <h2>Create New Project</h2>
-            <button class="close-btn" (click)="showCreateModal = false">×</button>
+            <button class="close-btn" (click)="closeCreateModal()">×</button>
           </div>
           <div class="modal-body">
             <div class="form-group">
@@ -147,6 +151,7 @@ interface Repository {
                 id="projectName" 
                 type="text" 
                 [(ngModel)]="newProject.name" 
+                (ngModelChange)="onProjectNameChange()"
                 placeholder="Enter project name"
                 class="form-input"
               >
@@ -156,6 +161,7 @@ interface Repository {
               <textarea 
                 id="projectDescription" 
                 [(ngModel)]="newProject.description" 
+                (ngModelChange)="onProjectDescriptionChange()"
                 placeholder="Enter project description"
                 class="form-textarea"
                 rows="3"
@@ -166,7 +172,7 @@ interface Repository {
             </div>
           </div>
           <div class="modal-footer">
-            <button class="btn btn-secondary" (click)="showCreateModal = false">Cancel</button>
+            <button class="btn btn-secondary" (click)="closeCreateModal()">Cancel</button>
             <button class="btn btn-primary" (click)="createProject()" [disabled]="creating">
               {{ creating ? 'Creating...' : 'Create Project' }}
             </button>
@@ -234,6 +240,21 @@ interface Repository {
       text-align: center;
       padding: 2rem;
       color: #666;
+    }
+
+    .loading-spinner {
+      width: 40px;
+      height: 40px;
+      border: 3px solid #f3f3f3;
+      border-top: 3px solid #667eea;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin: 0 auto 1rem auto;
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
     }
 
     .error-state {
@@ -509,7 +530,8 @@ export class ProjectsComponent implements OnInit {
 
   constructor(
     private router: Router,
-    private http: HttpClientService
+    private http: HttpClientService,
+    private ngZone: NgZone
   ) {}
 
   ngOnInit(): void {
@@ -520,25 +542,43 @@ export class ProjectsComponent implements OnInit {
     this.loading = true;
     this.error = null;
 
-    try {
-      const projects = await lastValueFrom(this.http.get<any[]>('/projects'));
-      this.projects = projects || [];
-      this.loading = false;
-
-      // Load repositories for each project in background
-      this.loadRepositories();
-    } catch (e) {
-      console.error('Failed to load projects:', e);
-      this.error = 'Failed to load projects. Please try again.';
-      this.loading = false;
-    }
+    this.ngZone.run(() => {
+      try {
+        console.log('Loading projects from /api/projects');
+        this.http.get<any[]>('/api/projects').subscribe({
+          next: (projects) => {
+            console.log('Projects loaded:', projects);
+            this.projects = projects || [];
+            // Store full project objects in localStorage
+            projects.forEach((project: any) => {
+              localStorage.setItem(`project_${project.id}`, JSON.stringify(project));
+              console.log(`Stored project object for project ${project.id}`);
+            });
+            this.loading = false;
+            this.loadRepositories();
+          },
+          error: (e) => {
+            console.error('Failed to load projects:', e);
+            this.error = `Failed to load projects: ${e?.message || 'Unknown error'}. Please try again.`;
+            this.loading = false;
+          }
+        }).add(() => {
+          // Ensure loading is always set to false
+          this.loading = false;
+        });
+      } catch (e: any) {
+        console.error('Failed to load projects:', e);
+        this.error = `Failed to load projects: ${e?.message || 'Unknown error'}. Please try again.`;
+        this.loading = false;
+      }
+    });
   }
 
   async loadRepositories(): Promise<void> {
     // Load repositories for each project in parallel
     const repoPromises = this.projects.map(async (project) => {
       try {
-        const repos = await lastValueFrom(this.http.get<Repository[]>(`/repositories?project_id=${project.id}`));
+        const repos = await lastValueFrom(this.http.get<Repository[]>(`/api/repositories?project_id=${project.id}`));
         this.projectRepositories[project.id] = repos || [];
       } catch (e) {
         console.error(`Failed to load repositories for project ${project.id}:`, e);
@@ -576,7 +616,7 @@ export class ProjectsComponent implements OnInit {
         ...this.newProject,
         organization_id: '' // backend creates default org when empty
       };
-      const createdProject = await lastValueFrom(this.http.post<Project>('/projects', payload));
+      const createdProject = await lastValueFrom(this.http.post<Project>('/api/projects', payload));
       
       if (createdProject) {
         this.projects.push(createdProject);
@@ -603,6 +643,40 @@ export class ProjectsComponent implements OnInit {
     this.showGitHubInput = true;
   }
 
+  closeCreateModal(): void {
+    this.showCreateModal = false;
+    this.newProject = { name: '', description: '' };
+    this.createError = null;
+  }
+
+  closeRepoModal(): void {
+    this.showRepoModal = false;
+    this.showGitHubInput = false;
+    this.currentProjectId = null;
+    this.newRepo = { name: '', git_url: '', branch: 'main' };
+    this.repoError = null;
+  }
+
+  onProjectNameChange(): void {
+    this.createError = null;
+  }
+
+  onProjectDescriptionChange(): void {
+    this.createError = null;
+  }
+
+  onRepoNameChange(): void {
+    this.repoError = null;
+  }
+
+  onGitUrlChange(): void {
+    this.repoError = null;
+  }
+
+  onBranchChange(): void {
+    this.repoError = null;
+  }
+
   async addRepository(): Promise<void> {
     if (!this.newRepo.name.trim() || !this.newRepo.git_url.trim()) {
       this.repoError = 'Repository name and Git URL are required';
@@ -618,7 +692,7 @@ export class ProjectsComponent implements OnInit {
     this.repoError = null;
 
     try {
-      const repo = await lastValueFrom(this.http.post<Repository>('/repositories', {
+      const repo = await lastValueFrom(this.http.post<Repository>('/api/repositories', {
         project_id: this.currentProjectId,
         name: this.newRepo.name,
         git_url: this.newRepo.git_url,

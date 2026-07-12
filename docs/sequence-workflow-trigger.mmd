@@ -30,11 +30,11 @@ sequenceDiagram
     ControlPlane->>Worker: Start container
     Worker->>Worker: Read run parameters from env vars
     Worker->>Worker: Auto-start workflow immediately
-    Worker->>NATS: Publish ready signal<br/>agent.control.container.ready
+    Worker->>NATS: Publish ready signal<br/>agent.control.worker.{run_id}.ready
     NATS-->>Worker: ACK
 
     Note over AgentService,NATS: Agent service subscribes to global events
-    AgentService->>NATS: Subscribe to agent.events.>
+    AgentService->>NATS: Subscribe to agent.user.*.events.>
     NATS-->>AgentService: Subscribed
 
     AgentService-->>WebUI: SSE: Workflow started
@@ -62,7 +62,7 @@ sequenceDiagram
     Note over LangGraph,AgentService: Agent state updates via NATS
     loop For each state transition
         LangGraph->>Worker: Emit state event
-        Worker->>NATS: Publish event<br/>agent.events.{run_id}.{state}
+        Worker->>NATS: Publish event<br/>agent.user.{uid}.events.{rid}.state.{state}
         NATS->>AgentService: Event received via global stream
         AgentService->>PostgreSQL: Update chat state
         AgentService->>WebUI: SSE event<br/>{state, data}
@@ -71,7 +71,7 @@ sequenceDiagram
 
     LangGraph-->>Worker: Workflow complete
     Worker->>PostgreSQL: Update AgentRun status
-    Worker->>NATS: Publish final event<br/>agent.events.{run_id}.completed
+    Worker->>NATS: Publish final event<br/>agent.user.{uid}.events.{rid}.state.completed
     NATS->>AgentService: Final event received
     AgentService->>WebUI: SSE final event
     WebUI-->>User: Show final status
@@ -79,8 +79,8 @@ sequenceDiagram
     Note over User,ControlPlane: Chat termination flow
     User->>WebUI: Close chat
     WebUI->>AgentService: POST /api/chatkit/close/{thread_id}
-    AgentService->>NATS: Publish chat.close<br/>{run_id}
-    NATS->>ControlPlane: Deliver chat.close message
+    AgentService->>NATS: Publish agent.control.{run_id}.close<br/>{run_id}
+    NATS->>ControlPlane: Deliver close message
     ControlPlane->>ControlPlane: Stop and remove container
     ControlPlane->>PostgreSQL: Update ChatContainer status
     ControlPlane-->>NATS: ACK

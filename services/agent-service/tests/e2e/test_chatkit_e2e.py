@@ -29,13 +29,13 @@ async def test_chatkit_basic_flow(test_client, nats_helper, mock_worker):
     assert response.status_code == 200
     assert "text/event-stream" in response.headers.get("content-type", "")
     
-    # Wait for chat.start message
+    # Wait for agent.control.{run_id}.start message
     chat_start = await nats_helper.wait_for_chat_start(timeout=10)
-    assert chat_start is not None, "chat.start message not received"
+    assert chat_start is not None, "agent.control.{run_id}.start message not received"
     
-    # Extract run_id from chat.start
+    # Extract run_id from control start message
     run_id = chat_start["data"].get("run_id")
-    assert run_id is not None, "run_id not found in chat.start"
+    assert run_id is not None, "run_id not found in control start message"
     
     # Subscribe to events for this run
     await nats_helper.subscribe_to_events(run_id)

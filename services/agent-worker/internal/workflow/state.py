@@ -10,7 +10,6 @@ class EngineeringState(TypedDict):
     user_id: str
     project_id: str
     repository_id: str
-    chatkit_thread_id: Optional[str]
     
     # Task definition
     task: str

@@ -6,7 +6,7 @@ from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
 from internal.agents.model_factory import get_model
 from internal.skills.registry import Skill, SkillRegistry
-from internal.tools.repository import ReadOnlyRepositoryTools, RepositoryMetadataTools
+from internal.tools.agent_tools import create_repository_tools, create_repository_metadata_tools
 from pydantic import BaseModel
 import httpx
 
@@ -82,45 +82,17 @@ class AgentFactory:
         
         # Add read-only repository tools if repository is available
         if repository_path:
-            repo_tools = ReadOnlyRepositoryTools(repository_path)
-            
-            @tool
-            def list_files(pattern: str = "*", recursive: bool = True) -> List[str]:
-                """List files in the repository matching a pattern"""
-                return repo_tools.list_files(pattern, recursive)
-            
-            @tool
-            def read_file(file_path: str) -> str:
-                """Read a file's contents"""
-                return repo_tools.read_file(file_path)
-            
-            @tool
-            def search_files(pattern: str, file_pattern: str = "*") -> List[Dict[str, Any]]:
-                """Search for a pattern in files"""
-                return repo_tools.search_files(pattern, file_pattern)
-            
-            @tool
-            def get_directory_structure(max_depth: int = 3) -> Dict[str, Any]:
-                """Get simplified directory structure"""
-                return repo_tools.get_directory_structure(max_depth)
-            
-            tools.extend([list_files, read_file, search_files, get_directory_structure])
+            tools.extend(create_repository_tools(repository_path))
         
         # Add repository metadata tools if repository_id is available
         if repository_id:
-            metadata_tools = RepositoryMetadataTools(self.control_plane_base_url, self.http_client)
-            
-            @tool
-            async def get_repository_metadata() -> Dict[str, Any]:
-                """Get repository metadata from control plane"""
-                return await metadata_tools.get_repository_metadata(repository_id)
-            
-            @tool
-            async def get_project_metadata(project_id: str) -> Dict[str, Any]:
-                """Get project metadata from control plane"""
-                return await metadata_tools.get_project_metadata(project_id)
-            
-            tools.extend([get_repository_metadata, get_project_metadata])
+            project_id = context.get("project_id") if context else None
+            tools.extend(create_repository_metadata_tools(
+                self.control_plane_base_url,
+                self.http_client,
+                repository_id=repository_id,
+                project_id=project_id,
+            ))
         
         return tools
     

@@ -1,0 +1,117 @@
+sequenceDiagram
+    participant User
+    participant WebUI as Angular UI
+    participant AgentService as Agent Service
+    participant NATS as NATS JetStream
+    participant ControlPlane as Control Plane
+    participant CrewAIContainer as CrewAI Container
+    participant PostgreSQL as PostgreSQL
+
+    Note over User,PostgreSQL: CrewAI Service-Level Flow
+
+    User->>WebUI: Start chat with CrewAI project
+    WebUI->>AgentService: POST /api/chatkit<br/>{message, agent_type: "crewai", folder}
+    AgentService->>PostgreSQL: Create thread
+    PostgreSQL-->>AgentService: Thread created
+
+    Note over AgentService,NATS: Container Creation
+    AgentService->>NATS: Publish agent.control.{run_id}.start<br/>{run_id, user_id, task, folder, ...}
+    NATS-->>AgentService: Published
+
+    NATS->>ControlPlane: Deliver start message
+    ControlPlane->>CrewAIContainer: Create container with env vars<br/>(RUN_ID, USER_ID, FOLDER, NATS_URL, etc.)
+    ControlPlane->>PostgreSQL: Save ChatContainer record
+    ControlPlane-->>NATS: ACK
+
+    Note over CrewAIContainer,NATS: Worker Bootstrap
+    CrewAIContainer->>CrewAIContainer: Start CrewAI worker process
+    CrewAIContainer->>NATS: Connect to NATS
+    CrewAIContainer->>NATS: Ensure streams<br/>(AGENT_CHAT, AGENT_CONTROL, AGENT_EVENTS)
+    CrewAIContainer->>NATS: Subscribe to user events<br/>agent.user.{uid}.chat.{rid}.user.events
+    CrewAIContainer->>NATS: Subscribe to control close<br/>agent.control.{run_id}.close
+    CrewAIContainer->>NATS: Publish ready signal<br/>agent.control.worker.{run_id}.ready
+    NATS-->>CrewAIContainer: ACK
+
+    NATS->>AgentService: Ready signal received
+    AgentService-->>WebUI: SSE: Worker ready
+    WebUI-->>User: Display worker ready
+
+    Note over CrewAIContainer,NATS: Project Resolution
+    alt Runnable folder found
+        CrewAIContainer->>CrewAIContainer: Detect command & start process
+        CrewAIContainer->>NATS: Publish state "started"<br/>agent.user.{uid}.events.{rid}.state.started
+    else No runnable folder - scan for projects
+        CrewAIContainer->>CrewAIContainer: Scan workspace for CrewAI projects
+        alt Projects found
+            CrewAIContainer->>NATS: Publish chat final<br/>status: "project_selection_required"
+            NATS->>AgentService: Chat event
+            AgentService-->>WebUI: SSE: Show project selection UI
+            User->>WebUI: Select project
+            WebUI->>AgentService: POST /api/chatkit<br/>{selected_project}
+            AgentService->>NATS: Publish agent.control.{run_id}.resume<br/>{folder: selected_project}
+            NATS->>ControlPlane: Resume message
+            ControlPlane->>CrewAIContainer: Recreate container with new folder
+            CrewAIContainer->>CrewAIContainer: Restart with selected project
+        else No projects found
+            CrewAIContainer->>NATS: Publish state "failed"
+            CrewAIContainer->>NATS: Publish chat final<br/>status: "failed"
+        end
+    end
+
+    Note over CrewAIContainer,WebUI: Output Streaming
+    loop Process output
+        CrewAIContainer->>NATS: Publish state "output"<br/>agent.user.{uid}.events.{rid}.state.output
+        CrewAIContainer->>NATS: Publish chat "progress_update"<br/>agent.user.{uid}.chat.{rid}.worker.events
+        NATS->>AgentService: Events received
+        AgentService->>WebUI: SSE events
+        WebUI->>User: Display output
+    end
+
+    Note over CrewAIContainer,WebUI: Input Prompt Handling
+    alt Input prompt detected
+        CrewAIContainer->>NATS: Publish state "waiting_input"<br/>agent.user.{uid}.events.{rid}.state.waiting_input
+        NATS->>AgentService: Waiting input event
+        AgentService->>WebUI: SSE: Show input dialog
+        User->>WebUI: Enter input
+        WebUI->>AgentService: POST /api/chatkit/input/{run_id}
+        AgentService->>NATS: Publish user event<br/>agent.user.{uid}.chat.{rid}.user.events
+        NATS->>CrewAIContainer: User input received
+        CrewAIContainer->>CrewAIContainer: Send input to process
+        CrewAIContainer->>NATS: Publish state "output" (stdin echo)
+    end
+
+    Note over CrewAIContainer,WebUI: Process Completion
+    alt Exit code == 0
+        CrewAIContainer->>NATS: Publish state "completed"<br/>agent.user.{uid}.events.{rid}.state.completed
+        CrewAIContainer->>NATS: Publish chat "final_answer"<br/>status: "completed"
+        NATS->>AgentService: Completed event
+        AgentService->>WebUI: SSE final event
+        WebUI->>User: Show "CrewAI run completed"
+    else Exit code != 0
+        CrewAIContainer->>NATS: Publish state "failed"
+        CrewAIContainer->>NATS: Publish chat "final_answer"<br/>status: "failed"
+        NATS->>AgentService: Failed event
+        AgentService->>WebUI: SSE error
+        WebUI->>User: Show "CrewAI run failed"
+    end
+
+    Note over User,CrewAIContainer: Cancellation
+    alt User closes chat
+        User->>WebUI: Close chat
+        WebUI->>AgentService: POST /api/chatkit/close/{run_id}
+        AgentService->>NATS: Publish agent.control.{run_id}.close
+        NATS->>ControlPlane: Close message
+        NATS->>CrewAIContainer: Control close received
+        CrewAIContainer->>CrewAIContainer: Graceful shutdown
+        CrewAIContainer->>NATS: Publish state "cancelled"
+        CrewAIContainer->>NATS: Publish chat "final_answer"<br/>status: "cancelled"
+        NATS->>AgentService: Cancelled event
+        AgentService->>WebUI: SSE cancelled
+        ControlPlane->>CrewAIContainer: Stop and remove container
+        ControlPlane->>PostgreSQL: Update ChatContainer status
+    end
+
+    Note over CrewAIContainer,NATS: Worker Cleanup
+    CrewAIContainer->>NATS: Unsubscribe from topics
+    CrewAIContainer->>NATS: Close connection
+    NATS-->>CrewAIContainer: Disconnected

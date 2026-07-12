@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/agentic-engineering/control-plane/internal/models"
 	"github.com/agentic-engineering/control-plane/internal/service"
 )
 
@@ -21,6 +22,11 @@ func (h *ProjectHandler) ListProjects(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	// Ensure we return an empty array instead of null
+	if projects == nil {
+		projects = []*models.Project{}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -68,8 +74,9 @@ func (h *ProjectHandler) GetProject(w http.ResponseWriter, r *http.Request) {
 func (h *ProjectHandler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
 	var req struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
+		Name        string  `json:"name"`
+		Description string  `json:"description"`
+		ThreadID    *string `json:"thread_id"` // JSON field stays "thread_id" for API compatibility
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -77,7 +84,7 @@ func (h *ProjectHandler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	project, err := h.projectService.UpdateProject(id, req.Name, req.Description)
+	project, err := h.projectService.UpdateProject(id, req.Name, req.Description, req.ThreadID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return

@@ -25,20 +25,20 @@ sequenceDiagram
     ControlPlane->>Worker: Start container<br/>(with RUN_ID, USER_ID, TASK, etc.)
     Worker->>Worker: Read run parameters from env vars
     Worker->>Worker: Auto-start workflow immediately
-    Worker->>NATS: Publish ready signal<br/>agent.control.container.ready
+    Worker->>NATS: Publish ready signal<br/>agent.control.worker.{run_id}.ready
     NATS-->>Worker: ACK
 
     Note over Worker,NATS: Event Publishing
-    Worker->>NATS: Create stream AGENT_EVENTS<br/>(subjects: agent.events.>)
+    Worker->>NATS: Create stream AGENT_EVENTS<br/>(subjects: agent.user.*.events.>)
     NATS-->>Worker: Stream created
 
     loop For each workflow event
-        Worker->>NATS: Publish event<br/>subject: agent.events.{run_id}.{state}<br/>payload: {event_type, data, ...}<br/>headers: {message_id, run_id}
+        Worker->>NATS: Publish event<br/>subject: agent.user.{uid}.events.{rid}.state.{state}<br/>payload: {event_type, data, ...}<br/>headers: {message_id, run_id}
         NATS-->>Worker: ACK (event persisted)
     end
 
     Note over NATS,AgentService: Event Consumption (Global Stream)
-    AgentService->>NATS: Subscribe to agent.events.><br/>queue: agent-service
+    AgentService->>NATS: Subscribe to agent.user.*.events.><br/>queue: agent-service
     NATS->>AgentService: Deliver event
     AgentService->>PostgreSQL: Store event
     AgentService->>NATS: ACK

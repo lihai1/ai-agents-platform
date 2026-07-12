@@ -12,6 +12,8 @@ GIT_TOKEN="${GIT_TOKEN:-}"
 NATS_URL="${NATS_URL:-nats://nats:4222}"
 MOCK_MODE="${MOCK_MODE:-false}"
 LLM_PROVIDER="${LLM_PROVIDER:-fake}"
+PYTHON_MODULE="${PYTHON_MODULE:-specialist_worker.main}"
+PYTHONPATH="${PYTHONPATH:-/app/internal/agents/specialist/src}"
 
 if [ -z "$RUN_ID" ]; then
     echo "Error: RUN_ID environment variable is required"
@@ -26,6 +28,7 @@ echo "Mock Mode: $MOCK_MODE"
 
 # Clone repository to workspace (or use mock repository)
 echo "Setting up workspace..."
+mkdir -p /workspace
 cd /workspace
 
 if [ "$MOCK_MODE" = "true" ]; then
@@ -63,33 +66,20 @@ else
         exit 1
     fi
 
-    # Configure git credentials if provided
-    if [ -n "$GIT_USERNAME" ] && [ -n "$GIT_TOKEN" ]; then
-        echo "Configuring git credentials..."
-        git config --global credential.helper store
-        echo "https://${GIT_USERNAME}:${GIT_TOKEN}@github.com" > ~/.git-credentials
-    fi
-
-    # Clone the repository
-    if [ -d "/workspace/.git" ]; then
-        echo "Repository already exists, pulling latest changes..."
-        git fetch origin
-        git checkout "$BRANCH"
-        git pull origin "$BRANCH"
-    else
-        echo "Cloning repository..."
-        git clone -b "$BRANCH" "$REPOSITORY_URL" /workspace
-    fi
-
-    echo "Repository cloned successfully"
+    # Use common clone script
+    source /app/scripts/clone-repo.sh
 fi
 
 # Start the worker process
 echo "Starting worker for run $RUN_ID..."
+echo "Python Module: $PYTHON_MODULE"
+echo "Python Path: $PYTHONPATH"
+
 export RUN_ID="$RUN_ID"
 export NATS_URL="$NATS_URL"
 export MOCK_MODE="$MOCK_MODE"
 export LLM_PROVIDER="$LLM_PROVIDER"
+export PYTHONPATH="$PYTHONPATH"
 
-# Run the worker
-python -m app.worker --run-id "$RUN_ID"
+# Run the specified Python module
+python -m "$PYTHON_MODULE" --run-id "$RUN_ID"

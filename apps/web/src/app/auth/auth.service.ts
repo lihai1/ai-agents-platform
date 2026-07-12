@@ -19,15 +19,15 @@ export class AuthService {
   constructor(private http: HttpClientService) {}
 
   login(email: string, password: string): Observable<LoginResponse> {
-    return this.http.post<LoginResponse>('/auth/login', { email, password });
+    return this.http.post<LoginResponse>('/api/auth/login', { email, password });
   }
 
   register(email: string, password: string, name: string): Observable<User> {
-    return this.http.post<User>('/auth/register', { email, password, name });
+    return this.http.post<User>('/api/auth/register', { email, password, name });
   }
 
   getCurrentUser(): Observable<User> {
-    return this.http.get<User>('/auth/me');
+    return this.http.get<User>('/api/auth/me');
   }
 
   logout(): void {

@@ -1,7 +1,7 @@
 import { Component, Output, EventEmitter, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { OllamaService, OllamaModel } from '../services/ollama.service';
+import { LLMService, LLMModel, LLMProviderType } from '../services/ollama.service';
 
 @Component({
   selector: 'app-chat-config',
@@ -20,9 +20,10 @@ import { OllamaService, OllamaModel } from '../services/ollama.service';
               <option value="">Select agent type...</option>
               <option value="specialist">Specialist (Multi-Agent)</option>
               <option value="single-agent">Single Agent</option>
+              <option value="crewai">CrewAI</option>
             </select>
           </label>
-          <p class="config-hint">Specialist mode uses multiple specialized agents, Single Agent uses one general agent</p>
+          <p class="config-hint">Specialist mode uses multiple specialized agents, Single Agent uses one general agent, CrewAI runs CrewAI projects from source</p>
         </div>
         
         <div class="config-section">
@@ -44,11 +45,11 @@ import { OllamaService, OllamaModel } from '../services/ollama.service';
             <span>Ollama Model</span>
             <select [(ngModel)]="modelName" class="config-select" [disabled]="loadingModels">
               <option value="">Loading models...</option>
-              <option *ngFor="let model of ollamaModels" [value]="model.name">{{ model.name }}</option>
+              <option *ngFor="let model of llmModels" [value]="model.name">{{ model.name }}</option>
             </select>
           </label>
           <p class="config-hint" *ngIf="loadingModels">Loading available models from Ollama...</p>
-          <p class="config-hint" *ngIf="!loadingModels && ollamaModels.length === 0">No models available. Make sure Ollama is running.</p>
+          <p class="config-hint" *ngIf="!loadingModels && llmModels.length === 0">No models available. Make sure Ollama is running.</p>
         </div>
         
         <div class="config-section" *ngIf="showAPIKeyInput">
@@ -197,7 +198,7 @@ export class ChatConfigComponent implements OnInit {
   mockMode = false;
   showAPIKeyInput = false;
   loadingModels = false;
-  ollamaModels: OllamaModel[] = [];
+  llmModels: LLMModel[] = [];
   
   @Output() configComplete = new EventEmitter<{
     agentType: string;
@@ -207,7 +208,7 @@ export class ChatConfigComponent implements OnInit {
     mockMode: boolean;
   }>();
   
-  constructor(private ollamaService: OllamaService) {
+  constructor(private llmService: LLMService) {
     // Load existing configuration from localStorage
     this.agentType = localStorage.getItem('chat_agent_type') || '';
     this.llmProvider = localStorage.getItem('chat_llm_provider') || '';
@@ -220,26 +221,26 @@ export class ChatConfigComponent implements OnInit {
   }
   
   ngOnInit(): void {
-    // Load Ollama models if Ollama is selected
-    if (this.llmProvider === 'ollama') {
-      this.loadOllamaModels();
+    // Load LLM models if provider is selected
+    if (this.llmProvider) {
+      this.loadLLMModels();
     }
   }
   
-  loadOllamaModels(): void {
+  loadLLMModels(): void {
     this.loadingModels = true;
-    this.ollamaService.getModels().subscribe({
-      next: (models) => {
-        this.ollamaModels = models;
+    this.llmService.getModels(this.llmProvider as LLMProviderType).subscribe({
+      next: (models: LLMModel[]) => {
+        this.llmModels = models;
         this.loadingModels = false;
         // Set default model if none selected
         if (!this.modelName && models.length > 0) {
           this.modelName = models[0].name;
         }
       },
-      error: (error) => {
-        console.error('Failed to load Ollama models:', error);
-        this.ollamaModels = [];
+      error: (error: any) => {
+        console.error('Failed to load LLM models:', error);
+        this.llmModels = [];
         this.loadingModels = false;
       }
     });
@@ -251,11 +252,11 @@ export class ChatConfigComponent implements OnInit {
       this.apiKey = '';
     }
     
-    // Load Ollama models when Ollama is selected
+    // Load LLM models when provider is selected
     if (this.llmProvider === 'ollama') {
-      this.loadOllamaModels();
+      this.loadLLMModels();
     } else {
-      this.ollamaModels = [];
+      this.llmModels = [];
       this.modelName = '';
     }
   }

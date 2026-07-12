@@ -10,7 +10,6 @@ class AgentRun(Base):
     user_id = Column(String, nullable=False, index=True)
     project_id = Column(String, nullable=False, index=True)
     repository_id = Column(String, nullable=False, index=True)
-    chatkit_thread_id = Column(String, nullable=True)  # ChatKit thread ID from OpenAI ChatKit SDK
     task = Column(Text, nullable=False)
     status = Column(String, nullable=False, index=True)  # CREATED, PREPARING_WORKSPACE, SCOUTING, PLANNING, DESIGNING, IMPLEMENTING, TESTING, REVIEWING, VERIFYING, REPAIRING, WAITING_APPROVAL, COMPLETED, FAILED, CANCELLED, BUDGET_EXCEEDED
     current_phase = Column(String, nullable=True)

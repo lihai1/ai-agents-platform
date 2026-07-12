@@ -11,11 +11,11 @@ class PostgreSQLStore:
         self.session_factory = session_factory
 
     async def create_thread(self, metadata: dict) -> str:
-        thread_id = str(uuid.uuid4())
+        run_id = metadata.get("id") or metadata.get("run_id") or str(uuid.uuid4())
         # Create AgentRun record
         async with self.session_factory() as session:
             run = AgentRun(
-                id=thread_id,
+                id=run_id,
                 user_id=metadata.get("user_subject", "user:local-dev"),
                 project_id=metadata.get("project_id") or "",
                 repository_id=metadata.get("repository_id") or "",
@@ -24,30 +24,31 @@ class PostgreSQLStore:
             )
             session.add(run)
             await session.commit()
-        return thread_id
+        return run_id
 
-    async def get_thread(self, thread_id: str) -> Optional[dict]:
+    async def get_thread(self, run_id: str) -> Optional[dict]:
         async with self.session_factory() as session:
             result = await session.execute(
-                select(AgentRun).where(AgentRun.id == thread_id)
+                select(AgentRun).where(AgentRun.id == run_id)
             )
             run = result.scalar_one_or_none()
             if run:
                 return {
                     "id": run.id,
+                    "run_id": run.id,
                     "title": run.task[:100],
                     "created_at": run.created_at,
                 }
         return None
 
-    async def add_message(self, thread_id: str, role: str, content: str) -> str:
+    async def add_message(self, run_id: str, role: str, content: str) -> str:
         message_id = str(uuid.uuid4())
         # Store in AgentEvent or create ChatMessage model
         async with self.session_factory() as session:
             from internal.models import AgentEvent
             event = AgentEvent(
                 id=message_id,
-                run_id=thread_id,
+                run_id=run_id,
                 event_type="message",
                 event_data={"role": role, "content": content},
                 sequence_number=0,
@@ -56,12 +57,12 @@ class PostgreSQLStore:
             await session.commit()
         return message_id
 
-    async def get_messages(self, thread_id: str) -> list[dict]:
+    async def get_messages(self, run_id: str) -> list[dict]:
         async with self.session_factory() as session:
             from internal.models import AgentEvent
             result = await session.execute(
                 select(AgentEvent).where(
-                    AgentEvent.run_id == thread_id,
+                    AgentEvent.run_id == run_id,
                     AgentEvent.event_type == "message"
                 )
             )

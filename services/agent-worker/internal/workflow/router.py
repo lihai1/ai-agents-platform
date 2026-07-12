@@ -18,7 +18,6 @@ class CreateRunRequest(BaseModel):
     project_id: str
     repository_id: str
     task: str
-    chatkit_thread_id: Optional[str] = None
     max_tokens: Optional[int] = None
     max_cost: Optional[float] = None
     max_repair_count: int = 2
@@ -54,7 +53,6 @@ async def create_agent_run(
         user_id=request.user_id,
         project_id=request.project_id,
         repository_id=request.repository_id,
-        chatkit_thread_id=request.chatkit_thread_id,
         task=request.task,
         status="CREATED",
         current_phase="CREATED",
@@ -77,7 +75,6 @@ async def create_agent_run(
         "user_id": request.user_id,
         "project_id": request.project_id,
         "repository_id": request.repository_id,
-        "chatkit_thread_id": request.chatkit_thread_id,
         "task": request.task,
         "max_tokens": request.max_tokens,
         "max_cost": request.max_cost,

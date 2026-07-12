@@ -18,7 +18,7 @@ class NatsBridge:
         prompt: str,
         metadata: dict,
     ) -> None:
-        # Publish to agent.chat.{run_id}.start for container creation with all run parameters
+        # Publish to agent.control.{run_id}.start for container creation with all run parameters
         await self.nats.publish_chat_start(
             run_id=run_id,
             repository_id=metadata.get("repository_id", ""),
@@ -30,7 +30,6 @@ class NatsBridge:
             api_key=metadata.get("api_key", ""),
             user_id=user_subject,
             task=prompt,
-            chatkit_thread_id=conversation_id,
             max_tokens=metadata.get("max_tokens", 0),
             max_cost=metadata.get("max_cost", 0.0),
             max_repair_count=metadata.get("max_repair_count", 2),

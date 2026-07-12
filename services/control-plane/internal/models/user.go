@@ -24,6 +24,7 @@ type Project struct {
 	OrganizationID string    `json:"organization_id"`
 	Name           string    `json:"name"`
 	Description    string    `json:"description"`
+	RunID          *string   `json:"thread_id"` // Renamed from ThreadID to RunID, but JSON field stays "thread_id" for API compatibility
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 }

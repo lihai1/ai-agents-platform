@@ -17,15 +17,13 @@ def get_langsmith_client() -> Client:
     return Client()
 
 
-def get_run_metadata(run_id: str, chatkit_thread_id: str = None, project_id: str = None, repository_id: str = None) -> dict:
+def get_run_metadata(run_id: str, project_id: str = None, repository_id: str = None) -> dict:
     """Get metadata for LangSmith tracing"""
     
     metadata = {
         "run_id": run_id,
     }
     
-    if chatkit_thread_id:
-        metadata["chatkit_thread_id"] = chatkit_thread_id
     if project_id:
         metadata["project_id"] = project_id
     if repository_id:

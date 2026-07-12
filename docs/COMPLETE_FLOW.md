@@ -26,7 +26,7 @@ This document describes the complete flow from UI start page to agent execution,
 **Location:** `apps/web/src/app/projects/projects.component.ts`
 
 1. User navigates to `/` (projects page)
-2. UI loads projects from control plane: `GET /api/v1/projects`
+2. UI loads projects from agent-service (proxied to control-plane): `GET /api/projects`
 3. User clicks "New Project" or selects existing project
 4. User optionally selects GitHub repository (or none)
 5. User clicks "Start Chat"
@@ -178,10 +178,11 @@ await nats.subscribe_to_global_events(event_handler=handle_chat_event)
 
 **NATS Message 2+ - Agent State Updates:**
 ```python
-# Subject: agent.events.{run_id}.{state}
+# Subject: agent.user.{uid}.events.{rid}.state.{state}
 await nats.publish_event(
     event_type=state.lower(),
     run_id=run_id,
+    user_id=user_id,
     payload={
         "state": state,
         "agent": agent_name,
@@ -192,20 +193,20 @@ await nats.publish_event(
 
 **Log Output:**
 ```
-[NATS PUBLISH] Publishing event {message_id} to subject: agent.events.{run_id}.scouting
+[NATS PUBLISH] Publishing event {message_id} to subject: agent.user.{uid}.events.{rid}.state.scouting
 [NATS PUBLISH] Event payload: {...}
-[NATS PUBLISH] Successfully published event {message_id} to agent.events.{run_id}.scouting
+[NATS PUBLISH] Successfully published event {message_id} to agent.user.{uid}.events.{rid}.state.scouting
 ```
 
 ### Step 8: Python Service Receives Agent Events
 **Location:** `services/agent-service/internal/chatkit/server.py`
 
-**NATS Subscriber:** `agent.events.>` (global event stream)
+**NATS Subscriber:** `agent.user.*.events.>` (global event stream)
 
 **Actions:**
 1. Receive event
    ```
-   [NATS RECEIVE] Received event on subject: agent.events.{run_id}.scouting
+   [NATS RECEIVE] Received event on subject: agent.user.{uid}.events.{rid}.state.scouting
    [NATS RECEIVE] Event payload: {...}
    [NATS RECEIVE] Received agent event for run {run_id}: {...}
    ```
@@ -237,10 +238,11 @@ data: {"state": "implementing", "agent": "go-developer", "message": "Writing cod
 
 **NATS Message - Approval Request:**
 ```python
-# Subject: agent.events.{run_id}.waiting_approval
+# Subject: agent.user.{uid}.events.{rid}.state.waiting_approval
 await nats.publish_event(
     event_type="waiting_approval",
     run_id=run_id,
+    user_id=user_id,
     payload={
         "approval_id": approval_id,
         "action": "push_code",
@@ -253,7 +255,7 @@ await nats.publish_event(
 
 **User Action:** Approve or Reject
 
-**API Call:** `POST /api/v1/runs/{run_id}/approvals/{approval_id}/approve`
+**API Call:** `POST /api/agent/runs/{run_id}/approvals/{approval_id}/approve` or `/reject`
 
 **NATS Message - Resume Command:**
 ```python
@@ -279,10 +281,11 @@ await nats.publish_chat_resume(
 
 **NATS Message - Final Event:**
 ```python
-# Subject: agent.events.{run_id}.completed
+# Subject: agent.user.{uid}.events.{rid}.state.completed
 await nats.publish_event(
     event_type="completed",
     run_id=run_id,
+    user_id=user_id,
     payload={
         "status": "completed",
         "artifacts": [...],
@@ -305,20 +308,20 @@ await nats.publish_event(
 
 **NATS Message - Chat Close:**
 ```python
-# Subject: agent.chat.close
+# Subject: agent.control.{run_id}.close
 await nats.publish_chat_close(run_id=run_id)
 ```
 
 **Log Output:**
 ```
-[NATS PUBLISH] Publishing chat close {message_id} to subject: agent.chat.close
+[NATS PUBLISH] Publishing chat close {message_id} to subject: agent.control.{run_id}.close
 [NATS PUBLISH] Chat close payload: {...}
 ```
 
 **Control Plane Actions:**
 1. Receive chat.close message
    ```
-   [NATS RECEIVE] Received chat close message on subject: agent.chat.close
+   [NATS RECEIVE] Received chat close message on subject: agent.control.{run_id}.close
    [NATS RECEIVE] Chat close payload: {...}
    [NATS RECEIVE] Run ID: {run_id}
    ```
@@ -334,21 +337,21 @@ await nats.publish_chat_close(run_id=run_id)
 
 ### Control Signals (Agent-Service → Control-Plane)
 - `agent.control.{run_id}.start` - Start run with all parameters (user_id, task, project_id, etc.)
-- `agent.control.{run_id}.cancel` - Cancel run (stop & remove container)
+- `agent.control.{run_id}.close` - Close run (stop & remove container)
 - `agent.control.{run_id}.resume` - Resume run (recreate container)
 
 ### Event Subjects (Worker → Agent-Service)
-- `agent.events.{run_id}.{event_type}` - State transition events
+- `agent.user.{uid}.events.{rid}.state.{event_type}` - State transition events
   - `created`, `preparing_workspace`, `scouting`, `planning`, `designing`
   - `implementing`, `testing`, `reviewing`, `verifying`, `repairing`
   - `waiting_approval`, `completed`, `failed`, `cancelled`, `budget_exceeded`
 
 ### Close Signal
-- `agent.chat.close` - Trigger container termination
+- `agent.control.{run_id}.close` - Trigger container termination
 
 ### Subscription Patterns
 - `agent.control.>` - All control signals (Control Plane subscription)
-- `agent.events.>` - All agent events (Agent Service global event stream)
+- `agent.user.*.events.>` - All agent events (Agent Service global event stream)
 
 ## Error Handling
 
@@ -368,7 +371,7 @@ await nats.publish_chat_close(run_id=run_id)
 5. Check PostgreSQL for run record
 
 ### Container Creation Fails
-**Symptoms:** No agent.events.{run_id}.* events published
+**Symptoms:** No agent.user.{uid}.events.{rid}.state.* events published
 
 **Debug:**
 - Check control plane logs
@@ -444,7 +447,7 @@ All logs include `chat_id` for correlation:
 **Fix:** Verify worker is subscribed to correct subject pattern
 
 ### Symptom: Agent events published but UI doesn't update
-**Fix:** Check Python service subscription to agent.chat.{chat_id}.>
+**Fix:** Check Python service subscription to agent.user.*.events.>
 
 ### Symptom: UI shows "Workflow started" but no updates
 **Fix:** Check worker logs for execution errors

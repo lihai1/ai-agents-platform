@@ -68,13 +68,14 @@ func (s *ProjectService) GetProject(id string) (*models.Project, error) {
 	return s.projectRepo.Get(id)
 }
 
-func (s *ProjectService) UpdateProject(id, name, description string) (*models.Project, error) {
+func (s *ProjectService) UpdateProject(id, name, description string, runID *string) (*models.Project, error) {
 	project, err := s.projectRepo.Get(id)
 	if err != nil {
 		return nil, err
 	}
 	project.Name = name
 	project.Description = description
+	project.RunID = runID
 	return s.projectRepo.Update(project)
 }
 

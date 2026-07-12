@@ -10,10 +10,7 @@ export class MockApiService implements HttpInterceptor {
   constructor(private http: HttpClient) {}
 
   intercept(request: HttpRequest<unknown>, next: HttpHandler): Observable<HttpEvent<unknown>> {
-    // Check if this is an API call we should mock
-    if (request.url.includes('localhost:8080') || request.url.includes('localhost:8000')) {
-      return this.handleMockRequest(request);
-    }
+    // Mock interceptor disabled - using real backend
     return next.handle(request);
   }
 
@@ -50,11 +47,11 @@ export class MockApiService implements HttpInterceptor {
     }
 
     // Mock ChatKit endpoints
-    if (url.includes('/chatkit/') && method === 'POST') {
+    if (url.includes('/api/chatkit/') && method === 'POST') {
       return this.createMockChatResponse();
     }
 
-    if (url.includes('/chatkit/threads') && method === 'GET') {
+    if (url.includes('/api/chatkit/threads') && method === 'GET') {
       return of(this.createResponse({
         thread: { id: 'thread-1', title: 'Test Thread', created_at: new Date().toISOString() },
         items: [
@@ -65,7 +62,7 @@ export class MockApiService implements HttpInterceptor {
     }
 
     // Mock agent run endpoints
-    if (url.includes('/agent/v1/runs') && method === 'POST') {
+    if (url.includes('/api/agent/runs') && method === 'POST') {
       return of(this.createResponse({
         id: 'run-1',
         status: 'created',
@@ -73,7 +70,7 @@ export class MockApiService implements HttpInterceptor {
       })).pipe(delay(100));
     }
 
-    if (url.includes('/agent/v1/runs/') && method === 'GET') {
+    if (url.includes('/api/agent/runs/') && method === 'GET') {
       return of(this.createResponse({
         id: 'run-1',
         status: 'completed',

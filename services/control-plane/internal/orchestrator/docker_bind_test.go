@@ -2,16 +2,10 @@ package orchestrator
 
 import (
 	"os"
-	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
-
-func TestDockerBindOrchestrator(t *testing.T) {
-	RegisterFailHandler(Fail)
-	RunSpecs(t, "DockerBindOrchestrator Suite")
-}
 
 var _ = Describe("DockerBindOrchestrator", func() {
 	var orch *DockerBindOrchestrator

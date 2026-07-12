@@ -3,6 +3,8 @@ import logging
 import json
 import uuid
 from datetime import datetime
+from pathlib import Path
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +27,7 @@ async def handle_command(command: dict, handle_run_start_func) -> None:
         logger.error(f"[WORKER] Error handling command: {e}")
 
 
-async def handle_run_start(run_id: str, payload: dict, create_run_func, get_checkpointer_func) -> None:
+async def handle_run_start(run_id: str, payload: dict, create_run_func, get_checkpointer_func, worker=None) -> None:
     """Handle run start command"""
     logger.info(f"[WORKER] Starting run for run {run_id}")
     logger.info(f"[WORKER] Run payload: {payload}")
@@ -40,13 +42,18 @@ async def handle_run_start(run_id: str, payload: dict, create_run_func, get_chec
         llm_provider = payload.get("llm_provider") or os.getenv("LLM_PROVIDER")
         logger.info(f"[WORKER] Mock mode: {mock_mode}, LLM provider: {llm_provider}")
 
+        # Create and store graph in worker if worker instance provided
+        if worker:
+            from internal.workflow.specialist_agent_graph import create_specialist_agent_graph
+            worker.graph = create_specialist_agent_graph(checkpointer)
+            logger.info(f"[WORKER] Graph instance stored in worker for run {run_id}")
+
         # Execute the workflow
         result = await create_run_func({
             "run_id": run_id,
             "user_id": payload.get("user_id"),
             "project_id": payload.get("project_id"),
             "repository_id": payload.get("repository_id"),
-            "chatkit_thread_id": payload.get("chatkit_thread_id"),
             "task": payload.get("task"),
             "max_tokens": payload.get("max_tokens"),
             "max_cost": payload.get("max_cost"),
@@ -61,87 +68,254 @@ async def handle_run_start(run_id: str, payload: dict, create_run_func, get_chec
         logger.error(f"[WORKER] Run for run {run_id} failed: {e}")
 
 
-async def publish_final_answer(run_id: str, content: str, nats_client) -> None:
-    """Publish final answer to agent.chat.{run_id}.events"""
-    if not nats_client or not nats_client.js:
-        logger.warning(f"[WORKER] NATS not connected, cannot publish final answer for run {run_id}")
-        return
+async def handle_user_event(event: dict, worker=None) -> None:
+    """Handle user events from agent-service and trigger appropriate agent actions"""
+    event_type = event.get("event_type")
+    run_id = event.get("run_id")
+    payload = event.get("payload", {})
     
-    message = {
-        "message_id": str(uuid.uuid4()),
-        "event_type": "final_answer",
-        "run_id": run_id,
-        "payload": {
-            "content": content,
-        },
-        "timestamp": datetime.utcnow().isoformat(),
-        "schema_version": "1.0",
-    }
+    logger.info(f"[WORKER] Received user event {event_type} for run {run_id}")
+    logger.info(f"[WORKER] User event payload: {event}")
     
-    subject = f"agent.chat.{run_id}.events"
     try:
-        await nats_client.js.publish(
-            subject=subject,
-            payload=json.dumps(message).encode(),
-            headers={
-                "message_id": message["message_id"],
-                "run_id": run_id,
-            }
+        # Handle tool approval events
+        if event_type in {"tool.allowed", "agent.tool.allowed", "agent.run.tool.allowed"}:
+            logger.info(f"[WORKER] Tool allowed: {payload.get('tool_name', 'unknown')}")
+            await resume_workflow_with_approval(run_id, "approved", payload, worker)
+        elif event_type in {"tool.denied", "agent.tool.denied", "agent.run.tool.denied"}:
+            logger.info(f"[WORKER] Tool denied: {payload.get('tool_name', 'unknown')}")
+            await resume_workflow_with_approval(run_id, "denied", payload, worker)
+        # Handle prompt events - trigger LangGraph agent with new prompt
+        elif event_type in {"prompt", "agent.prompt", "agent.run.prompt", "user_input"}:
+            logger.info(f"[WORKER] Prompt received: {payload.get('content', 'unknown')}")
+            await trigger_agent_with_prompt(run_id, payload, worker)
+        else:
+            logger.warning(f"[WORKER] Unknown user event type: {event_type}")
+    except Exception as e:
+        logger.error(f"[WORKER] Error handling user event: {e}")
+
+
+async def resume_workflow_with_approval(run_id: str, decision: str, payload: dict, worker=None) -> None:
+    """Resume workflow with approval decision using existing graph instance.
+    
+    Args:
+        run_id: The run identifier
+        decision: The approval decision ("approved" or "denied")
+        payload: The payload containing tool approval details
+        worker: Optional worker instance with stored graph
+    """
+    from internal.workflow.checkpointer import get_checkpointer
+    from internal.workflow.specialist_agent_graph import create_specialist_agent_graph
+    
+    logger.info(f"[WORKER] Resuming workflow for run {run_id} with decision: {decision}")
+    
+    try:
+        # Use stored graph instance if available
+        if worker and worker.graph:
+            graph = worker.graph
+            logger.info(f"[WORKER] Using stored graph instance for run {run_id}")
+        else:
+            checkpointer = await get_checkpointer()
+            graph = create_specialist_agent_graph(checkpointer)
+            logger.info(f"[WORKER] Created new graph instance for run {run_id}")
+        
+        # Get current state from checkpointer
+        config = {"configurable": {"thread_id": run_id}}
+        checkpointer = await get_checkpointer()
+        current_state = await checkpointer.aget(config)
+        
+        if not current_state:
+            logger.error(f"[WORKER] No state found for run {run_id}")
+            return
+        
+        # Update state with approval decision
+        state_values = current_state.values if hasattr(current_state, 'values') else current_state
+        approval_decisions = state_values.get("approval_decisions", {})
+        approval_decisions["last"] = decision
+        approval_decisions[payload.get("tool_name", "unknown")] = decision
+        
+        # Create updated state dict
+        updated_state = dict(state_values)
+        updated_state["approval_decisions"] = approval_decisions
+        
+        logger.info(f"[WORKER] Resuming workflow with updated approval decisions: {approval_decisions}")
+        
+        # Resume execution using existing graph
+        result = await graph.ainvoke(updated_state, config)
+        
+        logger.info(f"[WORKER] Workflow resumed successfully for run {run_id}")
+        
+    except Exception as e:
+        logger.error(f"[WORKER] Failed to resume workflow: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+
+
+async def trigger_agent_with_prompt(run_id: str, payload: dict, worker=None) -> None:
+    """Trigger LangGraph agent with new prompt content using existing graph instance.
+    
+    Args:
+        run_id: The run identifier
+        payload: The payload containing user input and metadata. May include:
+            - content/input: The user message text
+            - project: Optional project object with keys: name, path, full_path, main_file, description
+        worker: Optional worker instance with stored graph
+    """
+    from internal.workflow.checkpointer import get_checkpointer
+    from internal.workflow.specialist_agent_graph import create_specialist_agent_graph
+    from internal.messaging.nats import get_nats_client
+    
+    logger.info(f"[WORKER] Triggering agent with prompt for run {run_id}")
+    
+    try:
+        # Publish progress update to notify UI that agent is processing
+        nats = get_nats_client()
+        if nats:
+            await nats.publish_chat_event(
+                event_type="progress_update",
+                run_id=run_id,
+                user_id=payload.get("user_id", ""),
+                payload={"content": "Processing your input..."}
+            )
+            logger.info(f"[WORKER] Published progress_update for user input")
+        
+        # Check if payload contains a project object for CrewAI
+        project = payload.get("project")
+        
+        if project:
+            logger.info(f"[WORKER] Received project object: {project.get('name', 'unknown')}")
+            
+            # Check if it's a CrewAI project
+            from internal.agents.crewai.src.agent_worker.bootstrap import (
+                is_crewai_project,
+                WORKSPACE_ROOT,
+            )
+            
+            project_path = project.get("full_path") or project.get("path", "")
+            full_path = _resolve_project_path(project_path)
+            
+            if full_path.exists() and is_crewai_project(full_path):
+                logger.info(f"[WORKER] Detected CrewAI project at {full_path}")
+                
+                # Use CrewAI ProcessRunner to run the project
+                await _run_crewai_project(run_id, full_path, payload.get("user_id", ""), nats)
+                return
+            else:
+                logger.info(f"[WORKER] Path {full_path} is not a CrewAI project, falling back to LangGraph")
+        
+        # Use stored graph instance if available
+        if worker and worker.graph:
+            graph = worker.graph
+            logger.info(f"[WORKER] Using stored graph instance for run {run_id}")
+        else:
+            from internal.workflow.specialist_agent_graph import create_specialist_agent_graph
+            checkpointer = await get_checkpointer()
+            graph = create_specialist_agent_graph(checkpointer)
+            logger.info(f"[WORKER] Created new graph instance for run {run_id}")
+        
+        # Get current state from checkpointer
+        config = {"configurable": {"thread_id": run_id}}
+        checkpointer = await get_checkpointer()
+        current_state = await checkpointer.aget(config)
+        
+        if not current_state:
+            logger.error(f"[WORKER] No state found for run {run_id}")
+            return
+        
+        # Update state with new prompt content
+        state_values = current_state.values if hasattr(current_state, 'values') else current_state
+        updated_state = dict(state_values)
+        
+        # Add new prompt to messages
+        prompt_content = payload.get("content") or payload.get("input", "")
+        if prompt_content:
+            messages = updated_state.get("messages", [])
+            messages.append({"role": "user", "content": prompt_content})
+            updated_state["messages"] = messages
+            logger.info(f"[WORKER] Added new prompt to messages: {prompt_content}")
+        
+        # Trigger execution using existing graph
+        result = await graph.ainvoke(updated_state, config)
+        
+        logger.info(f"[WORKER] Agent triggered successfully with prompt for run {run_id}")
+        
+    except Exception as e:
+        logger.error(f"[WORKER] Failed to trigger agent with prompt: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+
+
+def _resolve_project_path(project_path: str) -> Path:
+    """Resolve a project path relative to workspace root.
+    
+    Args:
+        project_path: The project path (relative or absolute)
+        
+    Returns:
+        Resolved absolute Path
+    """
+    from internal.agents.crewai.src.agent_worker.bootstrap import WORKSPACE_ROOT
+    
+    full_path = Path(project_path)
+    if not full_path.is_absolute():
+        full_path = WORKSPACE_ROOT / project_path
+    return full_path
+
+
+async def _run_crewai_project(run_id: str, project_path: Path, user_id: str, nats) -> None:
+    """Run a CrewAI project using the ProcessRunner.
+    
+    Args:
+        run_id: The run identifier
+        project_path: The absolute path to the CrewAI project
+        user_id: The user identifier
+        nats: The NATS messaging client
+    """
+    from internal.agents.crewai.src.agent_worker.bootstrap import detect_command
+    from internal.agents.crewai.src.agent_worker.runner import ProcessRunner
+    from internal.agents.crewai.src.agent_worker.nats_client import CrewAINatsClient
+    
+    logger.info(f"[WORKER] Running CrewAI project at {project_path}")
+    
+    try:
+        # Detect the command to run the project
+        command = detect_command(project_path)
+        logger.info(f"[WORKER] Detected command: {command}")
+        
+        # Create a CrewAI NATS client for the ProcessRunner
+        crewai_nats = CrewAINatsClient(
+            nats_url=nats.nats_url,
+            uid=user_id,
+            run_id=run_id,
         )
-        logger.info(f"[WORKER] Published final answer for run {run_id}")
-    except Exception as e:
-        logger.error(f"[WORKER] Failed to publish final answer: {e}")
-
-
-async def publish_progress_update(run_id: str, content: str, nats_client) -> None:
-    """Publish progress update to agent.chat.{run_id}.events"""
-    if not nats_client or not nats_client.js:
-        logger.warning(f"[WORKER] NATS not connected, cannot publish progress update for run {run_id}")
-        return
-    
-    message = {
-        "message_id": str(uuid.uuid4()),
-        "event_type": "progress_update",
-        "run_id": run_id,
-        "payload": {
-            "content": content,
-        },
-        "timestamp": datetime.utcnow().isoformat(),
-        "schema_version": "1.0",
-    }
-    
-    subject = f"agent.chat.{run_id}.events"
-    try:
-        await nats_client.js.publish(
-            subject=subject,
-            payload=json.dumps(message).encode(),
-            headers={
-                "message_id": message["message_id"],
-                "run_id": run_id,
-            }
+        await crewai_nats.connect()
+        
+        # Create and run the ProcessRunner
+        runner = ProcessRunner(
+            nats=crewai_nats,
+            command=command,
+            cwd=project_path,
         )
-        logger.info(f"[WORKER] Published progress update for run {run_id}")
+        
+        # Subscribe to user events for this run
+        await crewai_nats.subscribe_user_events(runner.handle_user_input)
+        
+        # Run the project
+        await runner.run()
+        
+        logger.info(f"[WORKER] CrewAI project execution completed for run {run_id}")
+        
     except Exception as e:
-        logger.error(f"[WORKER] Failed to publish progress update: {e}")
+        logger.error(f"[WORKER] Failed to run CrewAI project: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        
+        # Publish error to UI
+        await nats.publish_chat_event(
+            event_type="final_answer",
+            run_id=run_id,
+            user_id=user_id,
+            payload={"content": f"Failed to run CrewAI project: {e}", "status": "failed", "error": True}
+        )
 
 
-async def publish_worker_ready(run_id: str, nats_client) -> None:
-    """Publish worker ready signal using plain NATS"""
-    if not nats_client or not nats_client.nc:
-        logger.warning(f"[WORKER] NATS not connected, cannot publish worker ready for run {run_id}")
-        return
-    
-    message = {
-        "message_id": str(uuid.uuid4()),
-        "run_id": run_id,
-        "status": "ready",
-        "timestamp": datetime.utcnow().isoformat(),
-        "schema_version": "1.0",
-    }
-    
-    subject = f"agent.control.container.ready"
-    try:
-        await nats_client.nc.publish(subject, json.dumps(message).encode())
-        logger.info(f"[WORKER] Published worker ready signal for run {run_id}")
-    except Exception as e:
-        logger.error(f"[WORKER] Failed to publish worker ready: {e}")

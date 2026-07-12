@@ -2,21 +2,30 @@ import { Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
 
-export interface OllamaModel {
+export interface LLMModel {
   name: string;
   modified_at: string;
   size: number;
 }
 
+export type LLMProviderType = 'ollama' | 'openai' | 'anthropic';
+
 @Injectable({
   providedIn: 'root'
 })
-export class OllamaService {
-  private controlPlaneUrl = 'http://localhost:8080/api/v1/ollama/models';
+export class LLMService {
+  private baseUrl = 'http://localhost:8000/api';
 
   constructor(private http: HttpClient) {}
 
-  getModels(): Observable<OllamaModel[]> {
-    return this.http.get<OllamaModel[]>(this.controlPlaneUrl);
+  getModels(providerType: LLMProviderType): Observable<LLMModel[]> {
+    if (providerType === 'ollama') {
+      return this.http.get<LLMModel[]>(`${this.baseUrl}/llm/models?provider=ollama`);
+    }
+    // For other providers, return empty array or implement as needed
+    return new Observable<LLMModel[]>(observer => {
+      observer.next([]);
+      observer.complete();
+    });
   }
 }

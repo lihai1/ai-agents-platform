@@ -1,9 +1,13 @@
 package main
 
-import "testing"
+import (
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+)
 
-func TestHello(t *testing.T) {
-	if got := Hello(); got != "Hello, real implementation!" {
-		t.Errorf("Hello() = %v, want %v", got, "Hello, real implementation!")
-	}
-}
+var _ = Describe("Hello", func() {
+	It("should return the correct greeting message", func() {
+		got := Hello()
+		Expect(got).To(Equal("Hello, real implementation!"))
+	})
+})

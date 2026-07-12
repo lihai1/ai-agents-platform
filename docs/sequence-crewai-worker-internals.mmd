@@ -1,0 +1,170 @@
+sequenceDiagram
+    participant User
+    participant WebUI as Angular UI
+    participant AgentService as Agent Service
+    participant NATS as NATS JetStream
+    participant WorkerMain as CrewAI Worker<br/>(main.py)
+    participant NatsClient as NATS Client<br/>(nats_client.py)
+    participant Bootstrap as Bootstrap<br/>(bootstrap.py)
+    participant Runner as ProcessRunner<br/>(runner.py)
+    participant Process as pexpect Process
+
+    Note over User,Process: CrewAI Worker Internal Flow
+
+    Note over WorkerMain,NatsClient: Worker Initialization
+    WorkerMain->>WorkerMain: Resolve config from env vars
+    WorkerMain->>NatsClient: Create NATS client<br/>(uid, run_id, nats_url)
+    NatsClient->>NATS: Connect to NATS
+    NatsClient->>NATS: Ensure streams<br/>(AGENT_CHAT, AGENT_CONTROL, AGENT_EVENTS)
+    NatsClient->>NATS: Subscribe to user events<br/>agent.user.{uid}.chat.{rid}.user.events
+    NatsClient->>NATS: Subscribe to control close<br/>agent.control.{run_id}.close
+    NatsClient->>NATS: Publish ready signal<br/>agent.control.worker.{run_id}.ready
+    NATS-->>NatsClient: ACK
+
+    Note over WorkerMain,Bootstrap: Folder Resolution
+    WorkerMain->>Bootstrap: resolve_runnable_folder(folder, example)
+    Bootstrap->>Bootstrap: _resolve_folder_argument (make absolute)
+    Bootstrap->>Bootstrap: ensure_inside_workspace
+    alt Example provided
+        Bootstrap->>Bootstrap: Resolve example under base folder
+        Bootstrap->>Bootstrap: Validate example exists and is dir
+        Bootstrap-->>WorkerMain: Resolved folder
+    else No example
+        Bootstrap->>Bootstrap: is_runnable_folder(base)
+        alt Base folder is runnable
+            Bootstrap-->>WorkerMain: Resolved folder
+        else Base folder not runnable
+            Bootstrap->>Bootstrap: _find_runnable_folders(base)
+            alt No runnable folders found
+                Bootstrap-->>WorkerMain: BootstrapError (no_runnable_folder)
+                WorkerMain->>NatsClient: Publish state "failed"
+                WorkerMain->>NatsClient: Publish chat final<br/>status: "failed"
+                NatsClient->>NATS: Publish events
+                NATS->>AgentService: Failed event
+                AgentService->>WebUI: SSE error
+                WebUI->>User: Show error
+            else Multiple runnable folders
+                Bootstrap-->>WorkerMain: BootstrapError (multiple_runnable_folders)<br/>with candidates list
+                WorkerMain->>NatsClient: Publish state "failed"
+                WorkerMain->>NatsClient: Publish chat final<br/>status: "failed" with candidates
+                NatsClient->>NATS: Publish events
+                NATS->>AgentService: Failed event
+                AgentService->>WebUI: SSE error with candidates
+                WebUI->>User: Show error with options
+            else Single runnable folder
+                Bootstrap-->>WorkerMain: Resolved folder
+            end
+        end
+    end
+
+    Note over WorkerMain,Runner: Process Execution
+    WorkerMain->>Runner: Create ProcessRunner<br/>(nats_client, command, cwd)
+    WorkerMain->>Runner: Run process
+    Runner->>Runner: Spawn pexpect process<br/>(bash -lc command)
+    Runner->>NatsClient: Publish state "started"
+    NatsClient->>NATS: Publish event
+    NATS->>AgentService: State update
+    AgentService->>WebUI: SSE: Process started
+    WebUI->>User: Show "CrewAI process started"
+
+    Note over Runner,Process: Output Streaming Loop
+    loop Read output until EOF
+        Runner->>Process: expect([newline, EOF, TIMEOUT])
+        alt Newline received
+            Process-->>Runner: Output chunk
+            Runner->>Runner: Accumulate buffer
+            alt Buffer reaches max size
+                Runner->>NatsClient: Publish state "output"<br/>{data: buffer, stream: stdout}
+                Runner->>NatsClient: Publish chat "progress_update"<br/>{message: buffer}
+                NatsClient->>NATS: Publish events
+                NATS->>AgentService: Events received
+                AgentService->>WebUI: SSE events
+                WebUI->>User: Display output
+                Runner->>Runner: Clear buffer
+            end
+        else EOF received
+            Process-->>Runner: EOF
+            Runner->>Runner: Flush remaining buffer
+            Runner->>NatsClient: Publish final output
+            NatsClient->>NATS: Publish event
+        else TIMEOUT (idle)
+            Runner->>Runner: Check idle time
+            alt Idle >= input_idle_seconds
+                Runner->>Runner: Check if buffer looks like input prompt
+                alt Input prompt detected
+                    Runner->>Runner: Extract prompt text
+                    Runner->>NatsClient: Publish state "waiting_input"<br/>{prompt: extracted}
+                    Runner->>NatsClient: Publish chat "progress_update"<br/>"Waiting for input"
+                    NatsClient->>NATS: Publish events
+                    NATS->>AgentService: Waiting input event
+                    AgentService->>WebUI: SSE: Show input dialog
+                    WebUI->>User: Display input dialog
+                    User->>WebUI: Enter input
+                    WebUI->>AgentService: POST /api/chatkit/input/{run_id}
+                    AgentService->>NATS: Publish user event<br/>{type: "user_input", input: text}
+                    NATS->>NatsClient: User event received
+                    NatsClient->>WorkerMain: Handle user event
+                    WorkerMain->>Runner: handle_user_input(data)
+                    Runner->>Runner: Queue pending input
+                    Runner->>Process: Send input line via sendline()
+                    Process-->>Runner: Input sent
+                    Runner->>NatsClient: Publish state "output"<br/>{data: input, stream: stdin}
+                    NatsClient->>NATS: Publish event
+                    NATS->>AgentService: Input echo
+                    AgentService->>WebUI: SSE event
+                    WebUI->>User: Show input in chat
+                else No input prompt
+                    Runner->>NatsClient: Flush buffer as output
+                end
+            end
+        end
+    end
+
+    Note over Runner,WebUI: Process Completion
+    Runner->>Process: Get exit status
+    Process-->>Runner: Exit code
+    alt Exit code == 0
+        Runner->>NatsClient: Publish state "completed"<br/>{exit_code: 0}
+        Runner->>NatsClient: Publish chat "final_answer"<br/>{status: "completed", content: output}
+        NatsClient->>NATS: Publish events
+        NATS->>AgentService: Completed event
+        AgentService->>WebUI: SSE final event
+        WebUI->>User: Show "CrewAI run completed"
+    else Exit code != 0
+        Runner->>NatsClient: Publish state "failed"<br/>{exit_code: code, error: message}
+        Runner->>NatsClient: Publish chat "final_answer"<br/>{status: "failed", error: true}
+        NatsClient->>NATS: Publish events
+        NATS->>AgentService: Failed event
+        AgentService->>WebUI: SSE error
+        WebUI->>User: Show "CrewAI run failed"
+    end
+
+    Note over WorkerMain,Process: Cancellation
+    alt Control close received
+        NATS->>NatsClient: Control close message
+        NatsClient->>WorkerMain: Handle control close
+        WorkerMain->>Runner: cancel()
+        Runner->>Runner: Set cancelled flag
+        Runner->>Process: Send SIGINT
+        Process->>Process: Graceful shutdown
+        alt Process still alive after 1s
+            Runner->>Process: Send EOF
+            alt Process still alive after another 1s
+                Runner->>Process: SIGKILL (kill -9)
+            end
+        end
+        Runner->>NatsClient: Publish state "cancelled"
+        Runner->>NatsClient: Publish chat "final_answer"<br/>{status: "cancelled"}
+        NatsClient->>NATS: Publish events
+        NATS->>AgentService: Cancelled event
+        AgentService->>WebUI: SSE cancelled
+        WebUI->>User: Show "CrewAI run cancelled"
+    end
+
+    Note over WorkerMain,NatsClient: Worker Cleanup
+    WorkerMain->>Runner: Cleanup (close process)
+    Runner->>Process: Close force
+    WorkerMain->>NatsClient: Unsubscribe from topics
+    WorkerMain->>NatsClient: Close NATS connection
+    NatsClient->>NATS: Disconnect
+    NATS-->>NatsClient: Disconnected

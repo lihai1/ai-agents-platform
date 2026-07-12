@@ -12,35 +12,26 @@ import (
 
 // ChatStartMessage represents a chat start message from NATS
 type ChatStartMessage struct {
-	MessageID       string  `json:"message_id"`
-	RunID           string  `json:"run_id"`
-	RepositoryID    string  `json:"repository_id"`
-	ProjectID       string  `json:"project_id"`
-	UserID          string  `json:"user_id"`
-	Task            string  `json:"task"`
-	MockMode        bool    `json:"mock_mode"`
-	AgentType       string  `json:"agent_type"`   // "multi-agent" or "single-agent"
-	LLMProvider     string  `json:"llm_provider"` // "fake", "ollama", "openai", "anthropic"
-	ModelName       string  `json:"model_name"`   // Model name for the LLM provider
-	APIKey          string  `json:"api_key"`      // API key for non-Ollama providers
-	ChatkitThreadID string  `json:"chatkit_thread_id"`
-	MaxTokens       int     `json:"max_tokens"`
-	MaxCost         float64 `json:"max_cost"`
-	MaxRepairCount  int     `json:"max_repair_count"`
-	Timestamp       string  `json:"timestamp"`
-	SchemaVersion   string  `json:"schema_version"`
+	MessageID      string  `json:"message_id"`
+	RunID          string  `json:"run_id"`
+	RepositoryID   string  `json:"repository_id"`
+	ProjectID      string  `json:"project_id"`
+	UserID         string  `json:"user_id"`
+	Task           string  `json:"task"`
+	MockMode       bool    `json:"mock_mode"`
+	AgentType      string  `json:"agent_type"`   // "multi-agent" or "single-agent"
+	LLMProvider    string  `json:"llm_provider"` // "fake", "ollama", "openai", "anthropic"
+	ModelName      string  `json:"model_name"`   // Model name for the LLM provider
+	APIKey         string  `json:"api_key"`      // API key for non-Ollama providers
+	MaxTokens      int     `json:"max_tokens"`
+	MaxCost        float64 `json:"max_cost"`
+	MaxRepairCount int     `json:"max_repair_count"`
+	Timestamp      string  `json:"timestamp"`
+	SchemaVersion  string  `json:"schema_version"`
 }
 
 // ChatCloseMessage represents a chat close message from NATS
 type ChatCloseMessage struct {
-	MessageID     string `json:"message_id"`
-	RunID         string `json:"run_id"`
-	Timestamp     string `json:"timestamp"`
-	SchemaVersion string `json:"schema_version"`
-}
-
-// ChatCancelMessage represents a chat cancel message from NATS
-type ChatCancelMessage struct {
 	MessageID     string `json:"message_id"`
 	RunID         string `json:"run_id"`
 	Timestamp     string `json:"timestamp"`
@@ -106,7 +97,7 @@ func HandleChatStart(msg *nats.Msg, chatContainerService *service.ChatContainerS
 		ProjectID:       chatMsg.ProjectID,
 		RepositoryID:    chatMsg.RepositoryID,
 		Task:            chatMsg.Task,
-		ChatkitThreadID: chatMsg.ChatkitThreadID,
+		ChatkitThreadID: chatMsg.RunID,
 		MaxTokens:       chatMsg.MaxTokens,
 		MaxCost:         chatMsg.MaxCost,
 		MaxRepairCount:  chatMsg.MaxRepairCount,
@@ -115,6 +106,9 @@ func HandleChatStart(msg *nats.Msg, chatContainerService *service.ChatContainerS
 	if chatMsg.AgentType == "single-agent" {
 		_, err = chatContainerService.CreateSingleAgentContainerWithParams(repoConfig, llmConfig, runParams)
 		log.Printf("[NATS RECEIVE] Creating single-agent container for run %s with LLM provider %s", chatMsg.RunID, chatMsg.LLMProvider)
+	} else if chatMsg.AgentType == "crewai" {
+		_, err = chatContainerService.CreateCrewAIContainerWithParams(repoConfig, llmConfig, runParams)
+		log.Printf("[NATS RECEIVE] Creating crewai container for run %s", chatMsg.RunID)
 	} else {
 		// Default to multi-agent mode
 		_, err = chatContainerService.CreateSpecialistAgentContainerWithParams(repoConfig, llmConfig, runParams)
@@ -173,44 +167,6 @@ func HandleChatClose(msg *nats.Msg, chatContainerService *service.ChatContainerS
 	}
 
 	log.Printf("[NATS RECEIVE] Successfully terminated worker for run %s", chatMsg.RunID)
-}
-
-// HandleChatCancel handles chat cancel messages from NATS
-func HandleChatCancel(msg *nats.Msg, chatContainerService *service.ChatContainerService, containerManager *orchestrator.Manager) {
-	var chatMsg ChatCancelMessage
-	if err := json.Unmarshal(msg.Data, &chatMsg); err != nil {
-		log.Printf("[NATS RECEIVE] Failed to unmarshal chat cancel message: %v", err)
-		return
-	}
-
-	log.Printf("[NATS RECEIVE] Received chat cancel message on subject: %s", msg.Subject)
-	log.Printf("[NATS RECEIVE] Chat cancel payload: %s", string(msg.Data))
-	log.Printf("[NATS RECEIVE] Run ID: %s", chatMsg.RunID)
-
-	// Get container info before stopping
-	container, err := chatContainerService.GetContainer(chatMsg.RunID)
-	if err != nil {
-		log.Printf("[NATS RECEIVE] Failed to get container for run %s: %v", chatMsg.RunID, err)
-		return
-	}
-
-	// Stop and remove worker container
-	if container != nil && container.ContainerID != "" {
-		log.Printf("[NATS RECEIVE] Stopping worker container for run %s", chatMsg.RunID)
-		if err := containerManager.StopWorker(container.ContainerID); err != nil {
-			log.Printf("[NATS RECEIVE] Failed to stop worker for run %s: %v", chatMsg.RunID, err)
-			return
-		}
-		log.Printf("[NATS RECEIVE] Successfully stopped worker container for run %s", chatMsg.RunID)
-	}
-
-	// Clean up database record
-	if err := chatContainerService.RemoveContainer(chatMsg.RunID); err != nil {
-		log.Printf("[NATS RECEIVE] Failed to remove container record for run %s: %v", chatMsg.RunID, err)
-		return
-	}
-
-	log.Printf("[NATS RECEIVE] Successfully cancelled worker for run %s", chatMsg.RunID)
 }
 
 // HandleChatResume handles chat resume messages from NATS

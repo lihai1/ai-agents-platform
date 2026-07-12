@@ -11,6 +11,7 @@ class RequestContext:
     authorization: str | None
     project_id: str | None = None
     repository_id: str | None = None
+    run_id: str | None = None
     mock_mode: bool = False
     llm_provider: str = "ollama"
     model_name: str = "qwen3.5:9b"
@@ -27,8 +28,12 @@ def _env_llm_provider() -> str:
 
 
 def context_from_request(request: Request) -> RequestContext:
+    user_subject = request.headers.get("X-User-Subject")
+    if not user_subject:
+        raise ValueError("X-User-Subject header is required")
+    
     return RequestContext(
-        user_subject=request.headers.get("X-User-Subject", "user:local-dev"),
+        user_subject=user_subject,
         org_id=request.headers.get("X-Org-Id", "org:aegis-demo"),
         request_id=request.headers.get("X-Request-Id"),
         authorization=request.headers.get("Authorization"),

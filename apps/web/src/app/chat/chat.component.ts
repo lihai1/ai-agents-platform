@@ -13,6 +13,14 @@ import { ChatConfigComponent } from '../chat-config/chat-config.component';
 interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
+  projects?: any[];
+}
+
+interface Project {
+  name: string;
+  path: string;
+  main_file: string;
+  description?: string;
 }
 
 @Component({
@@ -23,6 +31,12 @@ interface ChatMessage {
     <app-chat-config *ngIf="showConfig" (configComplete)="onConfigComplete($event)"></app-chat-config>
     
     <div class="chat-container" *ngIf="!showConfig">
+      @if (loadingThread) {
+        <div class="loading-overlay">
+          <div class="loading-spinner"></div>
+          <p>Loading conversation...</p>
+        </div>
+      }
       <div class="chat-header">
         <h1>Agent Chat</h1>
         <div class="chat-controls">
@@ -36,6 +50,9 @@ interface ChatMessage {
           <button class="btn btn-secondary" (click)="resetConfig()">
             Reset Config
           </button>
+          <button class="btn btn-close" (click)="closeSession()" [disabled]="!runId">
+            Close session
+          </button>
         </div>
       </div>
       
@@ -45,7 +62,25 @@ interface ChatMessage {
           
           <div class="chat-messages" *ngIf="messages.length > 0; else noMessages">
             <div *ngFor="let message of messages" class="message" [class.user]="message.role === 'user'" [class.assistant]="message.role === 'assistant'">
-              <div class="message-content">{{ message.content }}</div>
+              <div *ngIf="message.projects && message.projects.length > 0" class="project-list">
+                <div *ngFor="let project of message.projects" class="project-card" (click)="selectProject(project)">
+                  <div class="project-name">{{ project.name }}</div>
+                  <div class="project-path">{{ project.path }}</div>
+                  <div class="project-main">Main: {{ project.main_file }}</div>
+                  <div *ngIf="project.description" class="project-description">{{ project.description }}</div>
+                </div>
+              </div>
+              <div *ngIf="!message.projects || message.projects.length === 0" class="message-content">
+                <div *ngIf="isJsonArray(message.content)" class="project-list">
+                  <div *ngFor="let project of parseJsonArray(message.content)" class="project-card" (click)="selectProject(project)">
+                    <div class="project-name">{{ project.name }}</div>
+                    <div class="project-path">{{ project.path }}</div>
+                    <div class="project-main">Main: {{ project.main_file }}</div>
+                    <div *ngIf="project.description" class="project-description">{{ project.description }}</div>
+                  </div>
+                </div>
+                <span *ngIf="!isJsonArray(message.content)">{{ message.content }}</span>
+              </div>
             </div>
           </div>
           
@@ -154,6 +189,20 @@ interface ChatMessage {
     .btn-secondary.active {
       background: #667eea;
     }
+
+    .btn-close {
+      background: #dc3545;
+      color: white;
+    }
+
+    .btn-close:hover:not(:disabled) {
+      background: #c82333;
+    }
+
+    .btn-close:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
     
     .chat-layout {
       display: flex;
@@ -217,6 +266,56 @@ interface ChatMessage {
       word-wrap: break-word;
     }
     
+    .project-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 1rem;
+      margin-top: 1rem;
+    }
+    
+    .project-card {
+      background: #f8f9fa;
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      padding: 1rem;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    
+    .project-card:hover {
+      background: #e9ecef;
+      border-color: #667eea;
+      transform: translateY(-2px);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    
+    .project-name {
+      font-weight: 600;
+      color: #333;
+      margin-bottom: 0.5rem;
+      font-size: 1rem;
+    }
+    
+    .project-path {
+      color: #666;
+      font-size: 0.85rem;
+      margin-bottom: 0.25rem;
+      font-family: monospace;
+    }
+    
+    .project-main {
+      color: #888;
+      font-size: 0.8rem;
+      margin-bottom: 0.25rem;
+    }
+    
+    .project-description {
+      color: #555;
+      font-size: 0.85rem;
+      margin-top: 0.5rem;
+      line-height: 1.4;
+    }
+    
     .empty-chat {
       flex: 1;
       display: flex;
@@ -272,7 +371,42 @@ interface ChatMessage {
     font-family: inherit;
     width: 200px;
   }
-  
+
+  .loading-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(255, 255, 255, 0.9);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+  }
+
+  .loading-spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid #f3f3f3;
+    border-top: 3px solid #667eea;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin-bottom: 1rem;
+  }
+
+  @keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+  }
+
+  .loading-overlay p {
+    color: #666;
+    font-size: 1rem;
+    margin: 0;
+  }
+
   .btn-primary {
       background: #667eea;
       color: white;
@@ -299,10 +433,11 @@ export class ChatComponent implements OnInit, OnDestroy {
   showApprovalDialog = false;
   pendingApproval: any = null;
   
+  loadingThread = false;
   messages: ChatMessage[] = [];
   newMessage = '';
   isSending = false;
-  threadId: string | null = null;
+  runId: string | null = null;
   
   private eventSource: EventSource | null = null;
   
@@ -375,10 +510,10 @@ export class ChatComponent implements OnInit, OnDestroy {
     
     console.log('After config complete - agentType:', this.agentType, 'llmProvider:', this.llmProvider, 'modelName:', this.modelName, 'mockMode:', this.mockMode);
     
-    // Load threadId from localStorage if available
-    const savedThreadId = localStorage.getItem('chat_thread_id');
-    if (savedThreadId) {
-      this.threadId = savedThreadId;
+    // Load runId from localStorage if available
+    const savedRunId = localStorage.getItem('chat_run_id');
+    if (savedRunId) {
+      this.runId = savedRunId;
     }
     this.loadThread();
   }
@@ -389,11 +524,13 @@ export class ChatComponent implements OnInit, OnDestroy {
     localStorage.removeItem('chat_model_name');
     localStorage.removeItem('chat_api_key');
     localStorage.removeItem('chat_mock_mode');
+    localStorage.removeItem('chat_run_id');
     this.agentType = '';
     this.llmProvider = '';
     this.modelName = '';
     this.apiKey = '';
     this.mockMode = false;
+    this.runId = null;
     this.showConfig = true;
   }
   
@@ -423,15 +560,21 @@ export class ChatComponent implements OnInit, OnDestroy {
     
     try {
       const token = localStorage.getItem('jwt_token');
-      const response = await fetch('/chatkit/', {
+      const userStr = localStorage.getItem('user');
+      const user = userStr ? JSON.parse(userStr) : null;
+      // Sanitize user ID: replace colons with hyphens for NATS subject compatibility
+      const userId = (user?.id || 'user-local-dev').replace(/:/g, '-');
+      
+      const response = await fetch('/api/chatkit/', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'X-User-Subject': userId
         },
         body: JSON.stringify({
           message: message,
-          thread_id: this.threadId,
+          run_id: this.runId,
           trigger_workflow: this.triggerWorkflow,
           project_id: this.projectId,
           repository_id: this.repositoryId,
@@ -487,17 +630,51 @@ export class ChatComponent implements OnInit, OnDestroy {
                 if (content.length > 0) {
                   const text = content.map((c: any) => c.text || '').join('');
                   assistantMessage = text;
+
+                  // Check if content is a JSON array of projects
+                  let projects: any[] = [];
+                  try {
+                    const parsed = JSON.parse(text);
+                    if (Array.isArray(parsed)) {
+                      projects = parsed;
+                    }
+                  } catch (e) {
+                    // Not JSON, use regular text
+                  }
+
+                  // Also check if projects are in the item.projects field
+                  if (projects.length === 0) {
+                    projects = data.item.projects || [];
+                  }
+
                   if (data.item.thread_id) {
-                    this.threadId = data.item.thread_id;
-                    if (this.threadId) {
-                      localStorage.setItem('chat_thread_id', this.threadId);
+                    this.runId = data.item.thread_id;
+                    if (this.runId) {
+                      // Update project object in localStorage with run_id
+                      if (this.projectId) {
+                        const projectStr = localStorage.getItem(`project_${this.projectId}`);
+                        if (projectStr) {
+                          try {
+                            const project = JSON.parse(projectStr);
+                            project.thread_id = this.runId;
+                            localStorage.setItem(`project_${this.projectId}`, JSON.stringify(project));
+                            console.log(`Updated project ${this.projectId} with run_id ${this.runId}`);
+                          } catch (e) {
+                            console.log('Failed to update project object in localStorage');
+                          }
+                        }
+                      }
                     }
                   }
-                  
+
                   this.ngZone.run(() => {
                     const lastMessage = this.messages[this.messages.length - 1];
                     if (lastMessage && lastMessage.role === 'assistant') {
-                      this.messages[this.messages.length - 1] = { role: 'assistant', content: assistantMessage };
+                      this.messages[this.messages.length - 1] = {
+                        role: 'assistant',
+                        content: assistantMessage,
+                        projects: projects.length > 0 ? projects : undefined
+                      };
                     }
                     // Re-enable button on completion
                     this.isSending = false;
@@ -509,9 +686,22 @@ export class ChatComponent implements OnInit, OnDestroy {
                 // Legacy format fallback
                 assistantMessage += data.content;
                 if (data.thread_id) {
-                  this.threadId = data.thread_id;
-                  if (this.threadId) {
-                    localStorage.setItem('chat_thread_id', this.threadId);
+                  this.runId = data.thread_id;
+                  if (this.runId) {
+                    // Update project object in localStorage with run_id
+                    if (this.projectId) {
+                      const projectStr = localStorage.getItem(`project_${this.projectId}`);
+                      if (projectStr) {
+                        try {
+                          const project = JSON.parse(projectStr);
+                          project.thread_id = this.runId;
+                          localStorage.setItem(`project_${this.projectId}`, JSON.stringify(project));
+                          console.log(`Updated project ${this.projectId} with run_id ${this.runId}`);
+                        } catch (e) {
+                          console.log('Failed to update project object in localStorage');
+                        }
+                      }
+                    }
                   }
                 }
                 if (data.workflow_triggered) {
@@ -542,8 +732,8 @@ export class ChatComponent implements OnInit, OnDestroy {
       }
       
       // Start event stream if workflow was triggered
-      if (workflowTriggered && this.threadId) {
-        this.handleRunStarted(this.threadId);
+      if (workflowTriggered && this.runId) {
+        this.handleRunStarted(this.runId);
       }
       
     } catch (error) {
@@ -558,19 +748,76 @@ export class ChatComponent implements OnInit, OnDestroy {
   }
   
   private async loadThread(): Promise<void> {
-    if (!this.threadId) return;
+    if (!this.projectId) {
+      console.log('No projectId, skipping loadThread');
+      return;
+    }
+    
+    this.loadingThread = true;
+    console.log('Loading thread for project:', this.projectId);
     
     try {
       const token = localStorage.getItem('jwt_token');
-      const response = await this.http.get<any>(`http://localhost:8000/api/chatkit/threads/${this.threadId}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      }).toPromise();
+      const userStr = localStorage.getItem('user');
+      const user = userStr ? JSON.parse(userStr) : null;
+      const userId = (user?.id || 'user-local-dev').replace(/:/g, '-');
       
-      if (response) {
-        this.messages = response.items || [];
+      // Check if project object exists in localStorage and has run_id
+      const projectStr = localStorage.getItem(`project_${this.projectId}`);
+      let savedRunId = null;
+      
+      if (projectStr) {
+        try {
+          const project = JSON.parse(projectStr);
+          savedRunId = project.thread_id;
+          console.log('Found project object with run_id:', savedRunId);
+        } catch (error) {
+          console.log('Failed to parse project object from localStorage');
+        }
       }
+      
+      if (savedRunId) {
+        // Try to load by run_id
+        try {
+          const response = await this.http.get<any>(`/api/chatkit/threads/${savedRunId}`, {
+            headers: { 
+              Authorization: `Bearer ${token}`,
+              'X-User-Subject': userId
+            }
+          }).toPromise();
+          
+          if (response && response.thread) {
+            this.runId = savedRunId;
+            this.messages = response.items || [];
+            console.log('Successfully loaded thread from project.run_id');
+            return;
+          }
+        } catch (error) {
+          console.log('Thread not found or invalid, clearing run_id from project');
+          // Update project object in localStorage to remove run_id
+          if (projectStr) {
+            try {
+              const project = JSON.parse(projectStr);
+              project.thread_id = null;
+              localStorage.setItem(`project_${this.projectId}`, JSON.stringify(project));
+            } catch (e) {
+              console.log('Failed to update project object in localStorage');
+            }
+          }
+        }
+      }
+      
+      // No run_id in project, initialize empty thread
+      console.log('No run_id found in project, initializing empty thread');
+      this.messages = [];
+      this.runId = null;
+      
     } catch (error) {
       console.error('Failed to load thread:', error);
+      this.messages = [];
+    } finally {
+      console.log('loadThread completed, setting loadingThread = false');
+      this.loadingThread = false;
     }
   }
   
@@ -591,7 +838,7 @@ export class ChatComponent implements OnInit, OnDestroy {
   
   handleApproval(approvalId: string, approved: boolean): void {
     const endpoint = approved ? 'approve' : 'reject';
-    this.http.post(`http://localhost:8000/agent/v1/runs/${this.currentRunId}/approvals/${approvalId}/${endpoint}`, {})
+    this.http.post(`/api/agent/runs/${this.currentRunId}/approvals/${approvalId}/${endpoint}`, {})
       .subscribe({
         next: () => {
           this.showApprovalDialog = false;
@@ -617,7 +864,7 @@ export class ChatComponent implements OnInit, OnDestroy {
     }
     
     const token = localStorage.getItem('jwt_token');
-    this.eventSource = new EventSource(`http://localhost:8000/agent/v1/runs/${runId}/events?token=${token}`);
+    this.eventSource = new EventSource(`/api/agent/runs/${runId}/events?token=${token}`);
     
     this.eventSource.onmessage = (event) => {
       const data = JSON.parse(event.data);
@@ -647,6 +894,61 @@ export class ChatComponent implements OnInit, OnDestroy {
       case 'artifact_created':
         this.handleArtifactCreated(event.event_data);
         break;
+    }
+  }
+  
+  selectProject(project: Project): void {
+    // Send selected project path as a user message
+    this.newMessage = project.path;
+    this.sendMessage();
+  }
+
+  isJsonArray(content: string): boolean {
+    try {
+      const parsed = JSON.parse(content);
+      return Array.isArray(parsed);
+    } catch (e) {
+      return false;
+    }
+  }
+
+  parseJsonArray(content: string): any[] {
+    try {
+      const parsed = JSON.parse(content);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  async closeSession(): Promise<void> {
+    if (!this.runId) return;
+
+    try {
+      const token = localStorage.getItem('jwt_token');
+      const userStr = localStorage.getItem('user');
+      const user = userStr ? JSON.parse(userStr) : null;
+      const userId = (user?.id || 'user-local-dev').replace(/:/g, '-');
+
+      await this.http.post(`/api/chatkit/close/${this.runId}`, {}, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'X-User-Subject': userId
+        }
+      }).toPromise();
+
+      // Clear thread state
+      this.runId = null;
+      localStorage.removeItem('chat_run_id');
+      this.messages = [];
+      this.currentRunId = null;
+      this.currentRun = null;
+
+      // Show confirmation message
+      this.messages.push({ role: 'assistant', content: 'Session closed. You can start a new conversation.' });
+    } catch (error) {
+      console.error('Failed to close session:', error);
+      this.messages.push({ role: 'assistant', content: 'Failed to close session. Please try again.' });
     }
   }
 }

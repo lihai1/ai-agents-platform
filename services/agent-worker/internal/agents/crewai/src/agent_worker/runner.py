@@ -21,6 +21,12 @@ from agent_worker.events import (
     state_waiting_input,
     chat_final,
     chat_progress,
+    semantic_terminal_started,
+    semantic_terminal_output_chunked,
+    semantic_terminal_input_required,
+    semantic_terminal_completed,
+    semantic_terminal_failed,
+    semantic_terminal_cancelled,
 )
 from agent_worker.nats_client import CrewAINatsClient
 from agent_worker.prompt_detection import extract_prompt_text, looks_like_input_prompt
@@ -63,6 +69,8 @@ class ProcessRunner:
         env: Optional[dict] = None,
         publish_started: bool = True,
         cancel_event: Optional[asyncio.Event] = None,
+        chunk_size_bytes: int = 1250,
+        chunk_delay_seconds: float = 3.0,
     ):
         self.nats = nats
         self.command = command
@@ -74,16 +82,24 @@ class ProcessRunner:
         self.command_timeout = command_timeout
         self.publish_started = publish_started
         self.cancel_event = cancel_event or asyncio.Event()
+        self.chunk_size_bytes = chunk_size_bytes
+        self.chunk_delay_seconds = chunk_delay_seconds
         self.child: Optional[pexpect.spawn] = None
         self._cancelled = False
         self._timed_out = False
         self._waiting_input = False
         self._input_event: Optional[asyncio.Event] = None
         self._pending_input: Optional[str] = None
-        self._stdout_buffer: list[str] = []
-        self._stderr_buffer: list[str] = []
+        # Keep only a bounded tail of stdout for run summaries. Full output is
+        # streamed via chunked terminal.output events to stay under NATS limits.
+        self._stdout_tail: str = ""
+        self._max_tail_chars: int = 2000
+        self._stderr_tail: str = ""
         self._process_started: bool = False
         self._start_time: float = 0.0
+        # Semantic terminal event state
+        self._terminal_session_id: str = f"tsess-{__import__('uuid').uuid4()}"
+        self._terminal_sequence: int = 0
 
     async def run(self) -> ProcessResult:
         """Run the command and stream events until completion."""
@@ -137,30 +153,40 @@ class ProcessRunner:
                     "cwd": str(self.cwd),
                 },
             )
+            # Semantic terminal.started
+            started_event = semantic_terminal_started(
+                run_id=self.nats.run_id,
+                user_id=self.nats.uid,
+                terminal_session_id=self._terminal_session_id,
+                execution_id=f"exec-{__import__('uuid').uuid4()}",
+                sequence=self._next_seq(),
+                command=display,
+            )
+            await self.nats.publish_chat(
+                "terminal.started",
+                started_event["payload"],
+            )
         self._process_started = True
 
         try:
-            await self._read_loop()
+            exit_code = await self._read_loop()
         except Exception as e:
             logger.exception("Runner loop failed")
             await self._publish_failure(f"Runner loop error: {e}")
+            exit_code = 1
         finally:
             await self._cleanup()
-
-        exit_code = self.child.exitstatus if self.child else 1
-        if exit_code is None:
-            exit_code = 1
 
         return ProcessResult(
             exit_code=exit_code,
             cancelled=self._cancelled,
             timed_out=self._timed_out,
-            stdout_tail=self._tail(self._stdout_buffer),
-            stderr_tail=self._tail(self._stderr_buffer),
+            stdout_tail=self._stdout_tail,
+            stderr_tail=self._stderr_tail,
         )
 
-    async def _read_loop(self) -> None:
-        """Read child output until EOF, cancellation, or command timeout."""
+    async def _read_loop(self) -> int:
+        """Read child output until EOF, cancellation, or command timeout. Returns the process exit code."""
         buffer = ""
         last_output_time = time.monotonic()
 
@@ -201,6 +227,7 @@ class ProcessRunner:
                 # EOF
                 if buffer:
                     await self._flush_buffer(buffer)
+                    buffer = ""
                 break
             elif index == 3:
                 # Timeout: check for pending input and idle prompt detection
@@ -214,9 +241,9 @@ class ProcessRunner:
                             await self._flush_buffer(buffer)
                             buffer = ""
 
-        # Collect remaining output
+        # Collect remaining output without blocking on a still-running process.
         try:
-            remaining = self.child.read()
+            remaining = await self._drain_remaining_output()
             if remaining:
                 await self._flush_buffer(remaining)
         except Exception:
@@ -228,30 +255,44 @@ class ProcessRunner:
 
         if self._cancelled:
             await self._publish_cancelled()
-            return
+            return 1
 
         if self._timed_out:
             await self._publish_failure(
                 f"Command timed out after {self.command_timeout} seconds",
                 exit_code=124,
             )
-            return
+            return 124
 
         exit_code = self.child.exitstatus
         if exit_code is None:
             try:
-                exit_code = self.child.wait() or 0
+                exit_code = await self._async_wait_for_exit()
             except Exception:
                 exit_code = 1
 
         if exit_code == 0:
-            final_content = "".join(self._stdout_buffer).strip()
-            if not final_content:
-                final_content = "CrewAI run completed successfully."
             await self.nats.publish_state(
                 "completed",
                 state_completed(self.nats.run_id, self.nats.uid, exit_code=0)["payload"],
             )
+            # Update terminal panel before terminating the stream.
+            completed_event = semantic_terminal_completed(
+                run_id=self.nats.run_id,
+                user_id=self.nats.uid,
+                terminal_session_id=self._terminal_session_id,
+                sequence=self._next_seq(),
+                exit_code=0,
+            )
+            await self.nats.publish_chat(
+                "terminal.completed",
+                completed_event["payload"],
+            )
+            # Bounded final answer: never send the entire accumulated stdout.
+            # Chunked terminal.output events carry the full stream safely.
+            final_content = self._stdout_tail or "CrewAI run completed successfully."
+            if len(final_content) > self._max_tail_chars:
+                final_content = final_content[-self._max_tail_chars:]
             await self.nats.publish_chat(
                 "final_answer",
                 chat_final(
@@ -261,11 +302,13 @@ class ProcessRunner:
                     status="completed",
                 )["payload"],
             )
+            return 0
         else:
             await self._publish_failure(
                 f"Process exited with code {exit_code}",
                 exit_code=exit_code,
             )
+            return exit_code
 
     async def _process_chunk(self, text: str, last_output_time: float) -> tuple[str, float]:
         """Accumulate and possibly flush output."""
@@ -274,29 +317,81 @@ class ProcessRunner:
             return "", time.monotonic()
         return text, last_output_time
 
+    def _next_seq(self) -> int:
+        """Return and increment the monotonic terminal sequence counter."""
+        seq = self._terminal_sequence
+        self._terminal_sequence += 1
+        return seq
+
     async def _flush_buffer(self, text: str) -> None:
-        """Publish buffered output as state and chat events, and keep a bounded tail."""
+        """Publish buffered output as chat events and keep a bounded tail."""
         if not text:
             return
-        clean_text = text.replace("\r", "")
-        self._stdout_buffer.append(clean_text)
-        await self.nats.publish_state(
-            "output",
-            state_output(
-                self.nats.run_id,
-                self.nats.uid,
-                data=clean_text,
-                stream="stdout",
-            )["payload"],
+        # Keep \r for ANSI cursor positioning (Rich overwrites lines with \r + cursor sequences)
+        # Update bounded tail; full output is sent via chunked terminal.output.
+        self._stdout_tail = (self._stdout_tail + text)[-self._max_tail_chars:]
+        # Semantic terminal.output (chunked with UI-optimized size and delay)
+        chunk_events = semantic_terminal_output_chunked(
+            run_id=self.nats.run_id,
+            user_id=self.nats.uid,
+            terminal_session_id=self._terminal_session_id,
+            sequence=self._next_seq(),
+            data=text,
+            max_chunk_bytes=self.chunk_size_bytes,
         )
-        await self.nats.publish_chat(
-            "progress_update",
-            chat_progress(
-                self.nats.run_id,
-                self.nats.uid,
-                message=clean_text,
-            )["payload"],
-        )
+        for idx, chunk_event in enumerate(chunk_events):
+            await self.nats.publish_chat(
+                "terminal.output",
+                chunk_event["payload"],
+            )
+            # Add delay between chunks for UI performance (except for last chunk)
+            if idx < len(chunk_events) - 1 and self.chunk_delay_seconds > 0:
+                await asyncio.sleep(self.chunk_delay_seconds)
+
+    async def _drain_remaining_output(self) -> str:
+        """Read buffered output without blocking until EOF or a short deadline.
+
+        pexpect.spawn.read() waits for EOF, which can hang if the process is
+        still alive (e.g. after a cancellation/timeout). Running read() in a
+        thread and capping the wait lets us drain whatever pexpect has already
+        buffered without blocking the asyncio event loop.
+        """
+        if not self.child:
+            return ""
+        try:
+            # read() returns data that pexpect already has buffered and will
+            # block only until EOF. The timeout keeps the event loop free.
+            return await asyncio.wait_for(
+                asyncio.to_thread(self.child.read),
+                timeout=2.0,
+            )
+        except asyncio.TimeoutError:
+            logger.debug("Drain timed out; returning what was already buffered")
+            return ""
+        except Exception:
+            return ""
+
+    async def _async_wait_for_exit(self) -> int:
+        """Wait for the child process exit without blocking the event loop."""
+        if not self.child:
+            return 1
+        try:
+            # pexpect.wait() blocks, so run it in a thread and cap the wait.
+            exit_code = await asyncio.wait_for(
+                asyncio.to_thread(self.child.wait),
+                timeout=5.0,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("Child process did not exit within 5 seconds, killing it")
+            try:
+                self.child.kill(9)
+            except Exception:
+                pass
+            return 1
+        except Exception as exc:
+            logger.warning("_async_wait_for_exit failed: %s", exc, exc_info=True)
+            return self.child.exitstatus if self.child and self.child.exitstatus is not None else 1
+        return exit_code or 0
 
     def _tail(self, buffer: list[str], limit: int = 2000) -> str:
         """Return the last `limit` characters of the collected buffer."""
@@ -324,6 +419,7 @@ class ProcessRunner:
         """Publish a waiting_input state and wait for user input."""
         prompt = extract_prompt_text(text)
         logger.info("Detected input prompt: %s", prompt)
+        # Legacy events
         await self.nats.publish_state(
             "waiting_input",
             state_waiting_input(
@@ -340,6 +436,19 @@ class ProcessRunner:
                 self.nats.uid,
                 message=f"Waiting for input: {prompt}",
             )["payload"],
+        )
+        # Semantic terminal.input_required
+        input_req_event = semantic_terminal_input_required(
+            run_id=self.nats.run_id,
+            user_id=self.nats.uid,
+            terminal_session_id=self._terminal_session_id,
+            request_id=f"ireq-{__import__('uuid').uuid4()}",
+            sequence=self._next_seq(),
+            prompt=prompt,
+        )
+        await self.nats.publish_chat(
+            "terminal.input_required",
+            input_req_event["payload"],
         )
         self._waiting_input = True
 
@@ -414,7 +523,7 @@ class ProcessRunner:
         await self._terminate()
 
     async def _publish_failure(self, error: str, exit_code: Optional[int] = None) -> None:
-        """Publish failed state and final answer error."""
+        """Publish failed state, terminal failed, and final answer error."""
         await self.nats.publish_state(
             "failed",
             state_failed(
@@ -424,6 +533,19 @@ class ProcessRunner:
                 reason="process_error",
                 exit_code=exit_code,
             )["payload"],
+        )
+        # Update terminal panel before terminating the stream.
+        failed_event = semantic_terminal_failed(
+            run_id=self.nats.run_id,
+            user_id=self.nats.uid,
+            terminal_session_id=self._terminal_session_id,
+            sequence=self._next_seq(),
+            exit_code=exit_code,
+            error=error,
+        )
+        await self.nats.publish_chat(
+            "terminal.failed",
+            failed_event["payload"],
         )
         await self.nats.publish_chat(
             "final_answer",
@@ -437,7 +559,7 @@ class ProcessRunner:
         )
 
     async def _publish_cancelled(self) -> None:
-        """Publish cancelled state and final answer."""
+        """Publish cancelled state, terminal cancelled, and final answer."""
         await self.nats.publish_state(
             "cancelled",
             state_cancelled(
@@ -445,6 +567,18 @@ class ProcessRunner:
                 self.nats.uid,
                 reason="control_close_received",
             )["payload"],
+        )
+        # Update terminal panel before terminating the stream.
+        cancelled_event = semantic_terminal_cancelled(
+            run_id=self.nats.run_id,
+            user_id=self.nats.uid,
+            terminal_session_id=self._terminal_session_id,
+            sequence=self._next_seq(),
+            reason="control_close_received",
+        )
+        await self.nats.publish_chat(
+            "terminal.cancelled",
+            cancelled_event["payload"],
         )
         await self.nats.publish_chat(
             "final_answer",
@@ -458,12 +592,19 @@ class ProcessRunner:
         )
 
     async def _cleanup(self) -> None:
-        """Close the child process."""
-        if self.child and self.child.isalive():
-            try:
-                self.child.close(force=True)
-            except Exception:
-                pass
+        """Close the child process without blocking on wait()."""
+        if not self.child:
+            return
+        try:
+            if self.child.isalive():
+                self.child.kill(9)
+            # close() in pexpect can call wait(); run it in a thread with a tight
+            # deadline so it cannot hang the event loop.
+            await asyncio.wait_for(asyncio.to_thread(self.child.close, True), timeout=2.0)
+        except Exception:
+            pass
+        finally:
+            self.child = None
 
     @property
     def waiting_input(self) -> bool:

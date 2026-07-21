@@ -1,6 +1,33 @@
 import json
+import re
 from typing import Any
 from chatkit.types import ProgressUpdateEvent
+
+
+def _sanitize_terminal_data(data: str) -> str:
+    """Strip non-SGR ANSI escape sequences that cause messy display in web terminals.
+
+    Keeps SGR color/style codes (ending in 'm') and removes cursor movement,
+    cursor positioning, line/screen clearing, scroll regions, cursor visibility,
+    OSC, DCS, APC, PM, and other device control sequences meant for interactive
+    terminals that produce repeated/duplicate output in web terminal log displays.
+    """
+    # Keep SGR (color/style), cursor positioning (G), erase line (K), erase display (J)
+    # cursor up (A), cursor visibility (?25l/?25h) for Rich's cursor-overwrite pattern
+    data = re.sub(
+        r'\x1b\[[\x30-\x3F]*[\x20-\x2F]*([\x40-\x7E])',
+        lambda m: m.group(1) in 'mGKJA' and m.group(0) or '',
+        data,
+    )
+    # Remove OSC sequences: ESC ] ... ST (BEL or ESC \)
+    data = re.sub(r'\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)', '', data)
+    # Remove DCS, APC, PM sequences: ESC P/^/_/ ... ST
+    data = re.sub(r'\x1b[P^_].*?(?:\x1b\\|\x9C)', '', data, flags=re.DOTALL)
+    # Remove other single-letter ESC sequences (excluding ESC[ already handled)
+    data = re.sub(r'\x1b[()\]{}#%`~=>\\]', '', data)
+    # Remove control characters that disrupt log display (keep \n, \r, \t, ESC)
+    data = re.sub(r'[\x00\x08\x0b\x0c\x0e-\x1a\x1c-\x1f\x7f]', '', data)
+    return data
 
 
 def _payload(event: dict[str, Any]) -> dict[str, Any]:
@@ -22,7 +49,6 @@ def is_completed_event(event: dict[str, Any]) -> bool:
     return event_type in {
         "agent.completed",
         "agent.run.completed",
-        "completed",
         "run.completed",
         "final_answer",
         "agent.final_answer",
@@ -32,24 +58,26 @@ def is_completed_event(event: dict[str, Any]) -> bool:
 def is_failed_event(event: dict[str, Any]) -> bool:
     event_type = get_event_type(event)
     payload = _payload(event)
-    if payload.get("error") is True:
+    # Treat explicit error payloads as failed unless they are cancellations.
+    if payload.get("error") is True and payload.get("status") != "cancelled":
         return True
     if event_type == "final_answer" and payload.get("status") == "failed":
         return True
     return event_type in {
         "agent.failed",
         "agent.run.failed",
-        "failed",
         "run.failed",
     }
 
 
 def is_cancelled_event(event: dict[str, Any]) -> bool:
     event_type = get_event_type(event)
+    payload = _payload(event)
+    if payload.get("status") == "cancelled":
+        return True
     return event_type in {
         "agent.cancelled",
         "agent.run.cancelled",
-        "cancelled",
         "run.cancelled",
     }
 
@@ -60,7 +88,12 @@ def final_answer_from_event(event: dict[str, Any]) -> str:
     
     # Handle failed events with error content
     if payload.get("error") or event_type in {"failed", "agent.failed", "agent.run.failed", "run.failed"}:
-        error_content = payload.get("content") or payload.get("error") or payload.get("message")
+        error_content = (
+            payload.get("content")
+            or payload.get("message")
+            or payload.get("error_message")
+            or (payload.get("error") if isinstance(payload.get("error"), str) else None)
+        )
         if error_content:
             return error_content
         errors = payload.get("errors", [])
@@ -83,6 +116,11 @@ def progress_from_event(event: dict[str, Any]) -> ProgressUpdateEvent:
     event_type = get_event_type(event)
     payload = _payload(event)
 
+    # Pure state lifecycle events are handled via final_answer / terminal events.
+    # Avoid emitting them as generic progress so they do not terminate the SSE stream early.
+    if event_type in {"completed", "failed", "cancelled"}:
+        return ProgressUpdateEvent(text="")
+
     if event_type in {"agent.accepted", "accepted", "run.accepted"}:
         return ProgressUpdateEvent(
             icon="check",
@@ -91,7 +129,7 @@ def progress_from_event(event: dict[str, Any]) -> ProgressUpdateEvent:
 
     if event_type in {"agent.scheduled", "scheduled", "run.scheduled"}:
         return ProgressUpdateEvent(
-            icon="server",
+            icon="desktop",
             text="Agent runner scheduled.",
         )
 
@@ -115,7 +153,7 @@ def progress_from_event(event: dict[str, Any]) -> ProgressUpdateEvent:
         "agent.run.tool.requested",
     }:
         return ProgressUpdateEvent(
-            icon="wrench",
+            icon="settings-slider",
             text=(
                 f"Tool requested: {payload.get('tool', 'unknown')} "
                 f"on {payload.get('resource', 'unknown')}"
@@ -126,7 +164,7 @@ def progress_from_event(event: dict[str, Any]) -> ProgressUpdateEvent:
         tool_name = payload.get('tool', 'unknown')
         action = payload.get('action', 'unknown')
         return ProgressUpdateEvent(
-            icon="wrench",
+            icon="settings-slider",
             text=f"Tool executed: {tool_name} ({action})",
         )
 
@@ -138,7 +176,7 @@ def progress_from_event(event: dict[str, Any]) -> ProgressUpdateEvent:
 
     if event_type in {"tool.denied", "agent.tool.denied", "agent.run.tool.denied"}:
         return ProgressUpdateEvent(
-            icon="shield",
+            icon="check-circle",
             text=(
                 f"Aegis denied: {payload.get('tool', 'unknown')}. "
                 f"Reason: {payload.get('reason', 'policy_denied')}"
@@ -151,7 +189,7 @@ def progress_from_event(event: dict[str, Any]) -> ProgressUpdateEvent:
         "agent.run.approval.required",
     }:
         return ProgressUpdateEvent(
-            icon="alert-triangle",
+            icon="info",
             text=(
                 f"Approval required: {payload.get('action', 'unknown')} "
                 f"on {payload.get('resource', 'unknown')}"
@@ -176,8 +214,17 @@ def progress_from_event(event: dict[str, Any]) -> ProgressUpdateEvent:
             text = payload.get("message") or "Waiting for user input"
 
         return ProgressUpdateEvent(
-            icon="help-circle",
+            icon="circle-question",
             text=text,
+        )
+
+    # Semantic workflow progress
+    if event_type == "workflow.progress":
+        graph_node = payload.get("graph_node", "")
+        msg = payload.get("message") or f"Workflow: {graph_node}"
+        return ProgressUpdateEvent(
+            icon="agent",
+            text=msg,
         )
 
     # Handle workflow state events

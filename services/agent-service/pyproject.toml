@@ -20,7 +20,7 @@ dependencies = [
     "pydantic>=2.9.0",
     "python-jose[cryptography]>=3.3.0",
     "passlib[bcrypt]>=1.7.4",
-    "openai-chatkit>=0.1.0",
+    "openai-chatkit==1.6.5",
     "python-multipart>=0.0.9",
     "sse-starlette>=2.1.0",
     "langsmith>=0.1.0",

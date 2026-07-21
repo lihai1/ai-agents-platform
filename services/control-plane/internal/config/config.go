@@ -18,6 +18,9 @@ type Config struct {
 	OllamaBaseURL       string
 	NATSURL             string
 	ServiceID           string
+	DefaultUserEmail    string
+	DefaultUserPassword string
+	DefaultUserName     string
 }
 
 var (
@@ -40,6 +43,9 @@ func Get() *Config {
 			OllamaBaseURL:       getEnv("OLLAMA_BASE_URL", "http://localhost:11434"),
 			NATSURL:             getEnv("NATS_URL", "nats://localhost:4222"),
 			ServiceID:           getEnv("SERVICE_ID", "control-plane"),
+			DefaultUserEmail:    getEnv("DEFAULT_USER_EMAIL", ""),
+			DefaultUserPassword: getEnv("DEFAULT_USER_PASSWORD", ""),
+			DefaultUserName:     getEnv("DEFAULT_USER_NAME", ""),
 		}
 	})
 	return instance

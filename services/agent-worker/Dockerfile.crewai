@@ -41,3 +41,7 @@ COPY agents.md /app/agents.md
 ENV WORKSPACE_PATH=/workspace
 ENV PYTHONPATH=/app/internal/agents/crewai/src
 ENV PYTHON_MODULE=agent_worker.main
+
+# Chunking defaults for terminal output streaming
+ENV OUTPUT_MAX_BUFFER_CHARS=5000
+ENV CHUNK_SIZE_BYTES=2500

@@ -26,8 +26,10 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # Copy common internal code (shared by all workers)
-COPY services/agent-worker/internal /app/internal
 COPY services/agent-worker/pyproject.toml /app/pyproject.toml
+
+# Install uv for fast dependency resolution and for bootstrapping target CrewAI projects
+RUN pip install --no-cache-dir uv
 
 # Copy shared package and install it
 COPY shared /tmp/shared
@@ -61,4 +63,3 @@ COPY agents.md /app/agents.md
 
 # Set common environment variables
 ENV WORKSPACE_PATH=/workspace
-ENV PYTHONPATH=/app

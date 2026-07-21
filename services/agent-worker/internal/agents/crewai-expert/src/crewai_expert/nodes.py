@@ -387,7 +387,7 @@ async def run_crewai_cli_node(state: dict, nats: Any, cfg: ExpertConfig) -> dict
     command_spec = CommandSpec.model_validate(state.get("command_spec") or {})
     env = os.environ.copy()
     env["OLLAMA_BASE_URL"] = cfg.ollama_url
-    env["OLLAMA_MODEL"] = cfg.ollama_model
+    env["MODEL_NAME"] = cfg.ollama_model
     if command_spec.env:
         env.update(command_spec.env)
 

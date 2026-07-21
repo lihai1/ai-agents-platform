@@ -62,35 +62,21 @@ See main [README.md](../../README.md) for future goals and milestones.
 
 ## Quick Start
 
-### Build Docker Images
+### Build Docker Image
 
-The agent worker uses a modular Dockerfile structure where each worker type only includes the packages it needs:
+The agent worker now ships as a single Docker image that supports all worker types at runtime via the `AGENT_TYPE` environment variable:
 
 ```bash
-# Build base image with common dependencies
-docker build -f Dockerfile.base-builder -t agentic-agents-platform-agent-worker-base-builder:latest .
-
-# Build specialist worker (includes playwright, database deps)
-docker build -f Dockerfile.specialist -t agentic-agents-platform-agent-worker-specialist:latest .
-
-# Build single-agent worker (includes database deps + playwright for web search)
-docker build -f Dockerfile.single-agent -t agentic-agents-platform-agent-worker-single-agent:latest .
-
-# Build CrewAI worker (includes crewai, pexpect)
-docker build -f Dockerfile.crewai -t agentic-agents-platform-agent-worker-crewai:latest .
-
-# Build CrewAI Expert worker (includes crewai-expert extras for patching and approvals)
-docker build -f Dockerfile.crewai-expert -t agentic-agents-platform-agent-worker-crewai-expert:latest .
+# Build the unified worker image (all worker types in one container)
+docker build -f Dockerfile -t agentic-agents-platform-agent-worker:latest .
 ```
 
 **Dockerfile Structure:**
-- `Dockerfile.base-builder` - Common dependencies (langchain, langgraph, docker, nats)
-- `Dockerfile.specialist` - Specialist workflow + playwright + database deps
-- `Dockerfile.single-agent` - Single-agent workflow + database deps + playwright (for web search)
-- `Dockerfile.crewai` - CrewAI framework + pexpect
-- `Dockerfile.crewai-expert` - CrewAI Expert patching workflow + dependency tooling
+- `Dockerfile` - Unified image containing all agent worker dependencies (langchain/langgraph, playwright, crewai patching tools, etc.)
+- `scripts/container-start.sh` - Reads `AGENT_TYPE` and dispatches to the correct Python entry point
+- `AGENT_TYPE` values: `specialist`, `single-agent`, `crewai`, `crewai-expert`
 
-This modular approach reduces image size and build time by only including packages each worker type actually uses. Note that single-agent includes playwright for web search functionality, while specialist includes it for browser automation tasks.
+All required source paths and extras are pre-installed, so the same image runs any workflow.
 
 ### Run Worker Manually
 
@@ -119,9 +105,8 @@ docker run -e RUN_ID=<run_id> \
            -e REPOSITORY_URL=<repo_url> \
            -e BRANCH=<branch> \
            -e AGENT_TYPE=specialist \
-           -e PYTHON_MODULE=agent_worker.main \
            -e NATS_URL=nats://localhost:4222 \
-           agentic-agents-platform-agent-worker-specialist:latest
+           agentic-agents-platform-agent-worker:latest
 ```
 
 ### Development Environment

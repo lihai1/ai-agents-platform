@@ -186,9 +186,9 @@ def add_default_rag_config(text: str, ollama_url: str, ollama_model: str) -> str
     },
 }
 
-llm = LLM(model="ollama/__OLLAMA_MODEL__", base_url="__OLLAMA_URL__")
+llm = LLM(model="ollama/__MODEL_NAME__", base_url="__OLLAMA_URL__")
 """
-        config_block = config_block.replace("__OLLAMA_MODEL__", ollama_model).replace("__OLLAMA_URL__", ollama_url)
+        config_block = config_block.replace("__MODEL_NAME__", ollama_model).replace("__OLLAMA_URL__", ollama_url)
         text = insert_after_imports(text, config_block)
 
     # Inject config=DEFAULT_RAG_CONFIG into common tool constructors

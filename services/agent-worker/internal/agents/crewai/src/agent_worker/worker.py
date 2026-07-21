@@ -203,6 +203,8 @@ class CrewAIWorker:
             input_idle_seconds=self.config.input_idle_seconds,
             output_max_buffer_chars=self.config.output_max_buffer_chars,
             command_timeout=self.config.command_timeout_seconds,
+            chunk_size_bytes=self.config.chunk_size_bytes,
+            chunk_delay_seconds=self.config.chunk_delay_seconds,
         )
 
         try:

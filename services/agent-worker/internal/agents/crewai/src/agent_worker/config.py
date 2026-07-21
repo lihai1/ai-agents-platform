@@ -23,8 +23,10 @@ class WorkerConfig:
     example: Optional[str]
     command: Optional[str]
     command_timeout_seconds: Optional[int]
-    input_idle_seconds: float
-    output_max_buffer_chars: int
+    input_idle_seconds: float = 30.0
+    output_max_buffer_chars: int = 5000
+    chunk_size_bytes: int = 2500
+    chunk_delay_seconds: float = 3.0
 
     @property
     def user_id(self) -> str:
@@ -102,6 +104,18 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         default=int(os.getenv("OUTPUT_MAX_BUFFER_CHARS", "8000")),
         help="Maximum output buffer characters per chunk",
     )
+    parser.add_argument(
+        "--chunk-size-bytes",
+        type=int,
+        default=int(os.getenv("CHUNK_SIZE_BYTES", "1250")),
+        help="Maximum bytes per chunk for NATS/UI streaming (default: 1.25KB)",
+    )
+    parser.add_argument(
+        "--chunk-delay-seconds",
+        type=float,
+        default=float(os.getenv("CHUNK_DELAY_SECONDS", "3.0")),
+        help="Delay in seconds between sending chunks to UI (default: 3.0s)",
+    )
     return parser.parse_args(argv)
 
 
@@ -131,6 +145,8 @@ def resolve_config(args: Optional[argparse.Namespace] = None) -> WorkerConfig:
         command_timeout_seconds=args.command_timeout_seconds or None,
         input_idle_seconds=args.input_idle_seconds,
         output_max_buffer_chars=args.output_max_buffer_chars,
+        chunk_size_bytes=args.chunk_size_bytes,
+        chunk_delay_seconds=args.chunk_delay_seconds,
     )
 
 
@@ -147,6 +163,8 @@ def env_vars_from_config(config: WorkerConfig) -> dict[str, str]:
         "COMMAND_TIMEOUT_SECONDS": str(config.command_timeout_seconds or 0),
         "INPUT_IDLE_SECONDS": str(config.input_idle_seconds),
         "OUTPUT_MAX_BUFFER_CHARS": str(config.output_max_buffer_chars),
+        "CHUNK_SIZE_BYTES": str(config.chunk_size_bytes),
+        "CHUNK_DELAY_SECONDS": str(config.chunk_delay_seconds),
     }
     return env
 

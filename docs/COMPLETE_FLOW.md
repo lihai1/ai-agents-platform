@@ -433,7 +433,7 @@ await nats.publish_chat_close(run_id=run_id)
 - Check control plane logs
 - Check Docker daemon status and socket permissions
 - Check repository access credentials
-- Verify the requested `agent_type` has a matching image built (e.g., `agentic-agents-platform-agent-worker-crewai-expert:latest`)
+- Verify the unified worker image is built (e.g., `agentic-agents-platform-agent-worker:latest`) and that `AGENT_TYPE` is set in the container environment
 
 ### Workflow Doesn't Start
 **Symptoms:** Container created but no state events

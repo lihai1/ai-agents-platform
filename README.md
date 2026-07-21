@@ -75,6 +75,17 @@ This repository is intended to be a strong, opinionated starter for building mic
 make clean-start
 ```
 
+### Default User Auto-Creation
+
+The control-plane automatically creates a default user on startup if credentials are provided via environment variables. Copy `.env.example` to `.env` and configure:
+
+```bash
+cp .env.example .env
+# Edit .env with your desired credentials
+```
+
+The `.env` file is loaded by docker-compose for the control-plane service. If the user already exists, the startup logs will indicate that no action was taken.
+
 ### Start (Non-destructive)
 
 If you already have data and just want to start the stack:
@@ -376,8 +387,27 @@ ai-agents-platform/
 
 ### NATS Messaging Sequence
 
-
 ![NATS Messaging Sequence](docs/svg/sequence-nats-messaging.svg)
+
+### UI Screenshots
+
+**Project Selection**
+
+<div style="text-align: center;">
+  <img src="docs/screenshots/Screenshot%202026-07-21%20at%204.22.25.png" alt="Approval Dialog" width="70%">
+</div>
+
+**LLM Dialog**
+
+<div style="text-align: center;">
+  <img src="docs/screenshots/Screenshot%202026-07-21%20at%204.21.10.png" alt="Project Selection" width="70%">
+</div>
+
+**Chat Interface**
+
+<div style="text-align: center;">
+  <img src="docs/screenshots/Screenshot%202026-07-21%20at%204.17.58.png" alt="Chat Interface" width="70%">
+</div>
 
 ## Development
 

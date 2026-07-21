@@ -35,14 +35,15 @@ compose-up: build-containers
 # Stop and remove all containers
 compose-down:
 	@echo "Stopping and removing all containers..."
-	docker-compose down
+	docker-compose down	--remove-orphans || true
+	docker ps -q | grep agentic-agents | xargs -r docker kill || true
 	@echo "Deployment stopped"
 
 # Terminate deployment, clean volumes, and start fresh
 clean-start: clean build-containers
 	@echo "Starting services..."
-	docker-compose up -d
-	@echo "Clean start completed successfully"
+	docker-compose up
+# 	@echo "Clean start completed successfully"
 
 # Clean and start with mock LLM (LLM_PROVIDER=fake)
 mock-llm-start: clean build-containers
@@ -56,9 +57,7 @@ build-containers:
 	docker build -t agentic-agents-platform-control-plane ./services/control-plane
 	docker build -t agentic-agents-platform-agent-service . -f ./services/agent-service/Dockerfile
 	docker build -t agentic-agents-platform-agent-worker-base-builder:latest . -f ./services/agent-worker/Dockerfile.base-builder
-	docker build -t agentic-agents-platform-agent-worker-specialist:latest . -f ./services/agent-worker/Dockerfile.specialist
-	docker build -t agentic-agents-platform-agent-worker-single-agent:latest . -f ./services/agent-worker/Dockerfile.single-agent
-	docker build -t agentic-agents-platform-agent-worker-crewai:latest . -f ./services/agent-worker/Dockerfile.crewai
+	docker build -t agentic-agents-platform-agent-worker:latest . -f ./services/agent-worker/Dockerfile
 	docker build -t agentic-agents-platform-web ./apps/web
 	@echo "All containers built successfully"
 

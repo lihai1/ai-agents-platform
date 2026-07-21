@@ -4,7 +4,12 @@
     "secure": false,
     "changeOrigin": true,
     "logLevel": "debug",
-    "ws": true
+    "ws": true,
+    "timeout": 0,
+    "proxyTimeout": 0,
+    "headers": {
+      "Connection": "keep-alive"
+    }
   }
 }
 

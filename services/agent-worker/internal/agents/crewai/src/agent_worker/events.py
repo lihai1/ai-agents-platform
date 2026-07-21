@@ -1,9 +1,25 @@
-"""Event payload builders for the CrewAI worker."""
+"""Event payload builders for the CrewAI worker.
+
+Includes legacy event builders (state_*, chat_*) and new semantic terminal
+event builders that use NATS payload-safe chunking.
+"""
 from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
+
+from agentic_shared.chunking import build_chunked_terminal_output_events
+from agentic_shared.terminal_events import (
+    terminal_cancelled,
+    terminal_completed,
+    terminal_failed,
+    terminal_input_required,
+    terminal_output,
+    terminal_running,
+    terminal_started,
+    workflow_progress,
+)
 
 
 def _now() -> str:
@@ -195,4 +211,181 @@ def chat_final(
         payload=payload,
         user_id=user_id,
         session_id=session_id,
+    )
+
+
+# ------------------------------------------------------------------
+# Semantic terminal events (wrap shared builders in platform envelope)
+# ------------------------------------------------------------------
+
+
+def semantic_terminal_started(
+    run_id: str,
+    user_id: str,
+    terminal_session_id: str,
+    execution_id: str,
+    sequence: int,
+    command: str,
+) -> dict[str, Any]:
+    """Build envelope for terminal.started."""
+    payload = terminal_started(
+        run_id=run_id,
+        terminal_session_id=terminal_session_id,
+        execution_id=execution_id,
+        sequence=sequence,
+        command=command,
+    )
+    return base_event(
+        event_type="terminal.started",
+        run_id=run_id,
+        payload=payload,
+        user_id=user_id,
+    )
+
+
+def semantic_terminal_output_chunked(
+    run_id: str,
+    user_id: str,
+    terminal_session_id: str,
+    sequence: int,
+    data: str,
+    max_chunk_bytes: int,
+) -> list[dict[str, Any]]:
+    """Build envelope(s) for terminal.output with payload-safe chunking.
+
+    Returns a list of enveloped events (one per chunk).
+    """
+    chunk_events = build_chunked_terminal_output_events(
+        run_id=run_id,
+        terminal_session_id=terminal_session_id,
+        sequence=sequence,
+        data=data,
+        max_chunk_bytes=max_chunk_bytes,
+    )
+    return [
+        base_event(
+            event_type="terminal.output",
+            run_id=run_id,
+            payload=chunk_payload,
+            user_id=user_id,
+        )
+        for chunk_payload in chunk_events
+    ]
+
+
+def semantic_terminal_input_required(
+    run_id: str,
+    user_id: str,
+    terminal_session_id: str,
+    request_id: str,
+    sequence: int,
+    prompt: str = "",
+    options: Optional[list[str]] = None,
+) -> dict[str, Any]:
+    """Build envelope for terminal.input_required."""
+    payload = terminal_input_required(
+        run_id=run_id,
+        terminal_session_id=terminal_session_id,
+        request_id=request_id,
+        sequence=sequence,
+        prompt=prompt,
+        options=options,
+    )
+    return base_event(
+        event_type="terminal.input_required",
+        run_id=run_id,
+        payload=payload,
+        user_id=user_id,
+    )
+
+
+def semantic_terminal_completed(
+    run_id: str,
+    user_id: str,
+    terminal_session_id: str,
+    sequence: int,
+    exit_code: int,
+) -> dict[str, Any]:
+    """Build envelope for terminal.completed."""
+    payload = terminal_completed(
+        run_id=run_id,
+        terminal_session_id=terminal_session_id,
+        sequence=sequence,
+        exit_code=exit_code,
+    )
+    return base_event(
+        event_type="terminal.completed",
+        run_id=run_id,
+        payload=payload,
+        user_id=user_id,
+    )
+
+
+def semantic_terminal_failed(
+    run_id: str,
+    user_id: str,
+    terminal_session_id: str,
+    sequence: int,
+    exit_code: Optional[int] = None,
+    error: str = "",
+) -> dict[str, Any]:
+    """Build envelope for terminal.failed."""
+    payload = terminal_failed(
+        run_id=run_id,
+        terminal_session_id=terminal_session_id,
+        sequence=sequence,
+        exit_code=exit_code,
+        error=error,
+    )
+    return base_event(
+        event_type="terminal.failed",
+        run_id=run_id,
+        payload=payload,
+        user_id=user_id,
+    )
+
+
+def semantic_terminal_cancelled(
+    run_id: str,
+    user_id: str,
+    terminal_session_id: str,
+    sequence: int,
+    reason: str = "user_cancelled",
+) -> dict[str, Any]:
+    """Build envelope for terminal.cancelled."""
+    payload = terminal_cancelled(
+        run_id=run_id,
+        terminal_session_id=terminal_session_id,
+        sequence=sequence,
+        reason=reason,
+    )
+    return base_event(
+        event_type="terminal.cancelled",
+        run_id=run_id,
+        payload=payload,
+        user_id=user_id,
+    )
+
+
+def semantic_workflow_progress(
+    run_id: str,
+    user_id: str,
+    sequence: int,
+    graph_node: str,
+    status: str,
+    message: str = "",
+) -> dict[str, Any]:
+    """Build envelope for workflow.progress."""
+    payload = workflow_progress(
+        run_id=run_id,
+        sequence=sequence,
+        graph_node=graph_node,
+        status=status,
+        message=message,
+    )
+    return base_event(
+        event_type="workflow.progress",
+        run_id=run_id,
+        payload=payload,
+        user_id=user_id,
     )

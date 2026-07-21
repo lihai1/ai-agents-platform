@@ -1,5 +1,6 @@
 """Web search tool for agents"""
 import logging
+import os
 import aiohttp
 from typing import Dict, Any, List
 import json
@@ -12,7 +13,9 @@ class WebSearchTool:
     """Tool for performing web searches using DuckDuckGo's HTTP API"""
     
     def __init__(self):
-        self.base_url = "https://api.duckduckgo.com/"
+        # Allow overriding the search API base URL via the SEC_API_API_KEY env var.
+        # This lets tests (or alternative search backends) point at a mock/custom endpoint.
+        self.base_url = os.environ.get("SEC_API_API_KEY", "https://api.duckduckgo.com/")
     
     async def search(self, query: str, max_results: int = 5) -> Dict[str, Any]:
         """

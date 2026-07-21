@@ -9,14 +9,17 @@ import { DiffViewerComponent } from '../diff-viewer/diff-viewer.component';
 import { ApprovalDialogComponent } from '../approval-dialog/approval-dialog.component';
 import { RunContextComponent } from '../run-context/run-context.component';
 import { ChatConfigComponent } from '../chat-config/chat-config.component';
+import { TerminalComponent } from '../terminal/terminal.component';
 
 interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
+  icon?: string;
   projects?: any[];
   approval?: {
     approvalRequestId?: string;
     options: string[];
+    selectedOption?: string;
   };
 }
 
@@ -27,10 +30,28 @@ interface Project {
   description?: string;
 }
 
+export interface TerminalOutputChunk {
+  outputId: string;
+  data: string;
+  chunkIndex: number;
+  chunkCount: number;
+  sequence: number;
+}
+
+export interface TerminalSession {
+  sessionId: string;
+  command: string;
+  status: 'running' | 'completed' | 'failed' | 'cancelled';
+  startedAt: number;
+  endedAt?: number;
+  exitCode?: number;
+  output: TerminalOutputChunk[];
+}
+
 @Component({
   selector: 'app-chat',
   standalone: true,
-  imports: [CommonModule, FormsModule, ActivityComponent, ArtifactViewerComponent, DiffViewerComponent, ApprovalDialogComponent, RunContextComponent, ChatConfigComponent],
+  imports: [CommonModule, FormsModule, ActivityComponent, ArtifactViewerComponent, DiffViewerComponent, ApprovalDialogComponent, RunContextComponent, ChatConfigComponent, TerminalComponent],
   template: `
     <app-chat-config *ngIf="showConfig" (configComplete)="onConfigComplete($event)"></app-chat-config>
     
@@ -38,9 +59,9 @@ interface Project {
       <div class="chat-header">
         <h1>Agent Chat</h1>
         <div class="chat-controls">
-          <label class="workflow-toggle">
-            <input type="checkbox" [(ngModel)]="triggerWorkflow" />
-            <span>Trigger Agent Workflow</span>
+          <label class="workflow-toggle" [class.mock-active]="mockMode">
+            <input type="checkbox" [(ngModel)]="mockMode" />
+            <span>Mock Mode</span>
           </label>
           <button class="btn btn-secondary" (click)="toggleActivityPanel()" [class.active]="showActivityPanel">
             Activity
@@ -77,16 +98,22 @@ interface Project {
                     <div *ngIf="project.description" class="project-description">{{ project.description }}</div>
                   </div>
                 </div>
-                <span *ngIf="!isJsonArray(message.content)">{{ message.content }}</span>
+                <span *ngIf="!isJsonArray(message.content)" class="message-text">
+                  <span *ngIf="message.icon" class="message-icon">{{ getIconEmoji(message.icon) }}</span>
+                  {{ message.content }}
+                </span>
                 <div *ngIf="message.approval?.options?.length" class="chat-approval-options">
-                  <button
-                    *ngFor="let option of message.approval?.options"
-                    class="btn btn-option"
-                    (click)="handleChatApprovalSelection(message, option)"
-                    [disabled]="isApprovalSubmitted(message.approval?.approvalRequestId)"
-                  >
-                    {{ option }}
-                  </button>
+                  <ng-container *ngFor="let option of message.approval?.options">
+                    <button
+                      *ngIf="!message.approval?.selectedOption || option === message.approval?.selectedOption"
+                      class="btn btn-option"
+                      [class.selected]="option === message.approval?.selectedOption"
+                      (click)="handleChatApprovalSelection(message, option)"
+                      [disabled]="!!message.approval?.selectedOption"
+                    >
+                      {{ option }}
+                    </button>
+                  </ng-container>
                 </div>
               </div>
             </div>
@@ -97,6 +124,8 @@ interface Project {
               <p>Start a conversation with the AI agent</p>
             </div>
           </ng-template>
+          
+          <app-terminal [session]="terminalSession" (stdinInput)="onTerminalStdin($event)"></app-terminal>
           
           <div class="chat-input-area">
             <textarea 
@@ -178,6 +207,11 @@ interface Project {
       cursor: pointer;
     }
     
+    .workflow-toggle.mock-active {
+      background: #fff3cd;
+      border: 1px solid #ffc107;
+    }
+    
     .btn {
       padding: 0.5rem 1rem;
       border: none;
@@ -255,6 +289,7 @@ interface Project {
       margin-bottom: 0.75rem;
       padding: 0.75rem 1rem;
       border-radius: 8px;
+      width: fit-content;
       max-width: 80%;
     }
     
@@ -275,9 +310,19 @@ interface Project {
       word-wrap: break-word;
     }
 
+    .message-text {
+      display: inline;
+    }
+
+    .message-icon {
+      margin-right: 0.35rem;
+      font-size: 1.1em;
+    }
+
     .chat-approval-options {
       display: flex;
-      flex-direction: column;
+      flex-direction: row;
+      flex-wrap: wrap;
       gap: 0.5rem;
       margin-top: 0.75rem;
     }
@@ -286,6 +331,12 @@ interface Project {
       background: #667eea;
       color: white;
       text-align: left;
+      width: fit-content;
+    }
+
+    .chat-approval-options .btn-option.selected {
+      background: #28a745;
+      cursor: default;
     }
     
     .project-list {
@@ -438,7 +489,6 @@ interface Project {
 export class ChatComponent implements OnInit, OnDestroy {
   projectId: string | null = null;
   repositoryId: string | null = null;
-  triggerWorkflow = false;
   mockMode = false;
   llmProvider = 'fake';
   modelName = '';
@@ -456,13 +506,16 @@ export class ChatComponent implements OnInit, OnDestroy {
   pendingApproval: any = null;
   private submittedApprovalRequestIds = new Set<string>();
   private runProgressMessageIndex: number | null = null;
+
+  terminalSession: TerminalSession | null = null;
   
   messages: ChatMessage[] = [];
   newMessage = '';
   isSending = false;
   runId: string | null = null;
   
-  private eventSource: EventSource | null = null;
+  private chatkitStreamActive = false;
+  private chatkitAbortController: AbortController | null = null;
   
   constructor(
     private route: ActivatedRoute,
@@ -493,8 +546,9 @@ export class ChatComponent implements OnInit, OnDestroy {
   }
   
   ngOnDestroy(): void {
-    if (this.eventSource) {
-      this.eventSource.close();
+    // Cancel any active stream when component is destroyed
+    if (this.chatkitAbortController) {
+      this.chatkitAbortController.abort();
     }
   }
   
@@ -552,11 +606,11 @@ export class ChatComponent implements OnInit, OnDestroy {
     this.showConfig = true;
   }
   
-  handleEnter(event: Event): void {
+  async handleEnter(event: Event): Promise<void> {
     const keyboardEvent = event as KeyboardEvent;
     if (keyboardEvent.shiftKey) return;
     keyboardEvent.preventDefault();
-    this.sendMessage();
+    await this.sendMessage();
   }
   
   async sendMessage(): Promise<void> {
@@ -590,13 +644,6 @@ export class ChatComponent implements OnInit, OnDestroy {
   }
 
   private closeActivityStream(): void {
-    // The chat response and activity SSE share the same event stream; close any
-    // active activity stream while the chat response is consuming events. It will
-    // be restarted once the assistant message completes.
-    if (this.eventSource) {
-      this.eventSource.close();
-      this.eventSource = null;
-    }
   }
 
   private addUserMessage(message: string): void {
@@ -604,6 +651,10 @@ export class ChatComponent implements OnInit, OnDestroy {
   }
 
   private handleMessageSendError(error: any): void {
+    if ((error as any)?.name === 'AbortError') {
+      console.log('Previous chat stream cancelled');
+      return;
+    }
     console.error('Failed to send message:', error);
     this.messages.push({
       role: 'assistant',
@@ -614,22 +665,35 @@ export class ChatComponent implements OnInit, OnDestroy {
   }
 
   private async sendChatkitMessage(message: string, updateUi: boolean): Promise<void> {
+    // Cancel any previous stream
+    if (this.chatkitAbortController) {
+      this.chatkitAbortController.abort();
+    }
+    const controller = new AbortController();
+    this.chatkitAbortController = controller;
+
     const { token, userId } = this.getUserInfo();
-    const response = await this.sendChatkitRequest(token, userId, message);
-    
+    const response = await this.sendChatkitRequest(token, userId, message, controller.signal);
+
     if (!response.ok) {
       throw new Error('Failed to send message');
     }
 
-    const result = await this.processChatkitStream(response, updateUi);
-    
-    if (this.isSending) {
-      this.isSending = false;
-      this.cdr.detectChanges();
-    }
+    this.chatkitStreamActive = true;
+    this.runProgressMessageIndex = null;
+    try {
+      await this.processChatkitStream(response, updateUi);
 
-    if (result.workflowTriggered && this.runId) {
-      this.handleRunStarted(this.runId);
+      if (this.isSending) {
+        this.isSending = false;
+        this.cdr.detectChanges();
+      }
+
+    } finally {
+      if (this.chatkitAbortController === controller) {
+        this.chatkitStreamActive = false;
+        this.chatkitAbortController = null;
+      }
     }
   }
 
@@ -644,7 +708,8 @@ export class ChatComponent implements OnInit, OnDestroy {
   private async sendChatkitRequest(
     token: string | null,
     userId: string,
-    message: string
+    message: string,
+    signal: AbortSignal
   ): Promise<Response> {
     return await fetch('/api/chatkit/', {
       method: 'POST',
@@ -656,7 +721,6 @@ export class ChatComponent implements OnInit, OnDestroy {
       body: JSON.stringify({
         message: message,
         run_id: this.runId,
-        trigger_workflow: this.triggerWorkflow,
         project_id: this.projectId,
         repository_id: this.repositoryId,
         mock_mode: this.mockMode,
@@ -664,140 +728,97 @@ export class ChatComponent implements OnInit, OnDestroy {
         model_name: this.modelName,
         agent_type: this.agentType,
         api_key: this.apiKey
-      })
+      }),
+      signal
     });
   }
 
   private async processChatkitStream(
     response: Response,
     updateUi: boolean
-  ): Promise<{ workflowTriggered: boolean }> {
+  ): Promise<void> {
     const reader = response.body!.getReader();
     const decoder = new TextDecoder();
     let assistantMessage = '';
-    let workflowTriggered = false;
 
-    this.initializeAssistantMessage(updateUi);
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\n');
 
-      const chunk = decoder.decode(value);
-      const lines = chunk.split('\n');
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              console.log('SSE data:', data);
 
-      const result = this.processSSELines(lines, assistantMessage, updateUi);
-      assistantMessage = result.assistantMessage;
-      if (result.workflowTriggered) {
-        workflowTriggered = true;
-      }
-    }
-
-    if (updateUi && !assistantMessage) {
-      this.removeEmptyAssistantPlaceholder();
-    }
-
-    return { workflowTriggered };
-  }
-
-  private initializeAssistantMessage(updateUi: boolean): void {
-    if (updateUi) {
-      this.messages.push({ role: 'assistant', content: '' });
-    }
-  }
-
-  private removeEmptyAssistantPlaceholder(): void {
-    const lastMessage = this.messages[this.messages.length - 1];
-    if (lastMessage?.role === 'assistant' && !lastMessage.content) {
-      this.messages.pop();
-      this.cdr.detectChanges();
-    }
-  }
-
-  private processSSELines(
-    lines: string[],
-    assistantMessage: string,
-    updateUi: boolean
-  ): { assistantMessage: string; workflowTriggered: boolean } {
-    let workflowTriggered = false;
-
-    for (const line of lines) {
-      if (line.startsWith('data: ')) {
-        const result = this.processSSELine(line, assistantMessage, updateUi);
-        assistantMessage = result.assistantMessage;
-        if (result.workflowTriggered) {
-          workflowTriggered = true;
+              if (data.type === 'client_effect' && data.name) {
+                this.handleEvent({ event_type: data.name, payload: data.data || {} });
+                if (this.isTerminalEvent(data)) {
+                  continue;
+                }
+              } else if ((data.type === 'progress_update' || (data.icon && data.text)) && updateUi) {
+                this.updateRunProgressMessage(data.text, data.icon);
+              } else if (data.type === 'thread.item.done' && data.item) {
+                if (data.item.type === 'user_message') {
+                  continue;
+                }
+                const content = data.item.content || [];
+                if (content.length > 0) {
+                  assistantMessage = content.map((c: any) => c.text || '').join('');
+                  if (data.item.thread_id) {
+                    this.updateRunId(data.item.thread_id);
+                  }
+                  if (updateUi) {
+                    const projects = this.extractProjectsFromItem(data, assistantMessage);
+                    this.updateAssistantMessage(assistantMessage, projects, true);
+                  }
+                }
+              } else if (data.content && !this.isTerminalEvent(data)) {
+                assistantMessage += data.content;
+                if (data.thread_id) {
+                  this.updateRunId(data.thread_id);
+                }
+                if (updateUi) {
+                  this.updateAssistantMessage(assistantMessage, undefined, false);
+                }
+              }
+            } catch (e) {
+              console.error('SSE parse error:', e);
+            }
+          }
         }
       }
+    } finally {
+      reader.releaseLock();
     }
 
-    return { assistantMessage, workflowTriggered };
   }
 
-  private processSSELine(
-    line: string,
-    assistantMessage: string,
-    updateUi: boolean
-  ): { assistantMessage: string; workflowTriggered: boolean } {
-    try {
-      const data = JSON.parse(line.slice(6));
-      console.log('SSE data:', data);
-
-      let workflowTriggered = false;
-      if (data.workflow_triggered) {
-        workflowTriggered = true;
-      }
-
-      if ((data.type === 'progress_update' || (data.icon && data.text)) && updateUi) {
-        this.handleProgressUpdate(data);
-      } else if (data.type === 'thread.item.done' && data.item) {
-        const result = this.handleThreadItemDone(data, assistantMessage, updateUi);
-        assistantMessage = result.assistantMessage;
-      } else if (data.content) {
-        assistantMessage = this.handleContentUpdate(data, assistantMessage, updateUi);
-      }
-
-      return { assistantMessage, workflowTriggered };
-    } catch (e) {
-      console.error('SSE parse error:', e);
-      return { assistantMessage, workflowTriggered: false };
+  private isTerminalEvent(data: any): boolean {
+    // Check if this is a terminal-related event that should not appear in chat
+    const terminalPrefixes = ['terminal.', 'terminal_'];
+    const terminalNames = ['output', 'waiting_input'];
+    const name = data.name || data.type || '';
+    if (terminalPrefixes.some(prefix => name.startsWith(prefix))) {
+      return true;
     }
-  }
-
-  private handleProgressUpdate(data: any): void {
-    this.ngZone.run(() => {
-      const lastMessage = this.messages[this.messages.length - 1];
-      if (lastMessage?.role === 'assistant') {
-        this.messages[this.messages.length - 1] = {
-          role: 'assistant',
-          content: data.text || lastMessage.content
-        };
-        this.cdr.detectChanges();
+    if (terminalNames.includes(name)) {
+      return true;
+    }
+    // Also check if it's a client_effect with terminal name
+    if (data.type === 'client_effect' && data.name) {
+      if (terminalPrefixes.some(prefix => data.name.startsWith(prefix))) {
+        return true;
       }
-    });
-  }
-
-  private handleThreadItemDone(
-    data: any,
-    assistantMessage: string,
-    updateUi: boolean
-  ): { assistantMessage: string } {
-    const content = data.item.content || [];
-    if (content.length > 0) {
-      const text = content.map((c: any) => c.text || '').join('');
-      assistantMessage = text;
-
-      const projects = this.extractProjectsFromItem(data, text);
-
-      if (data.item.thread_id) {
-        this.updateRunId(data.item.thread_id);
-      }
-
-      if (updateUi) {
-        this.updateAssistantMessage(assistantMessage, projects, true);
+      if (terminalNames.includes(data.name)) {
+        return true;
       }
     }
-    return { assistantMessage };
+    return false;
   }
 
   private extractProjectsFromItem(data: any, text: string): any[] {
@@ -810,7 +831,6 @@ export class ChatComponent implements OnInit, OnDestroy {
       }
     } catch (e) {
       console.log('Failed to parse text as JSON, checking item.projects field');
-      // Not JSON, use regular text
     }
 
     if (projects.length === 0) {
@@ -822,23 +842,6 @@ export class ChatComponent implements OnInit, OnDestroy {
     return projects;
   }
 
-  private handleContentUpdate(
-    data: any,
-    assistantMessage: string,
-    updateUi: boolean
-  ): string {
-    assistantMessage += data.content;
-    if (data.thread_id) {
-      this.updateRunId(data.thread_id);
-    }
-
-    if (updateUi) {
-      this.updateAssistantMessage(assistantMessage, undefined, false);
-    }
-
-    return assistantMessage;
-  }
-
   private updateAssistantMessage(
     content: string,
     projects: any[] | undefined,
@@ -847,18 +850,16 @@ export class ChatComponent implements OnInit, OnDestroy {
     console.log('updateAssistantMessage called with:', { content, projects, complete });
     this.ngZone.run(() => {
       const lastMessage = this.messages[this.messages.length - 1];
-      if (lastMessage?.role === 'assistant') {
-        this.messages[this.messages.length - 1] = {
-          role: 'assistant',
-          content: content,
-          projects: projects
-        };
-        console.log('Updated message:', this.messages[this.messages.length - 1]);
-        if (complete) {
-          this.isSending = false;
-        }
-        this.cdr.detectChanges();
+      const msg: ChatMessage = { role: 'assistant', content, projects };
+      if (lastMessage?.role === 'assistant' && !lastMessage.approval) {
+        this.messages[this.messages.length - 1] = msg;
+      } else {
+        this.messages.push(msg);
       }
+      if (complete) {
+        this.isSending = false;
+      }
+      this.cdr.detectChanges();
     });
   }
 
@@ -877,7 +878,6 @@ export class ChatComponent implements OnInit, OnDestroy {
         }
       }
     }
-    this.handleRunStarted(runId);
   }
   
   private async loadThread(): Promise<void> {
@@ -931,7 +931,7 @@ export class ChatComponent implements OnInit, OnDestroy {
   private async initializeChatIfNeeded(): Promise<void> {
     // If we already have a runId from URL or localStorage, just load the thread
     if (this.runId) {
-      this.loadThread();
+      await this.loadThread();
       return;
     }
     
@@ -944,9 +944,14 @@ export class ChatComponent implements OnInit, OnDestroy {
       
       if (newRunId) {
         this.runId = newRunId;
-        this.handleRunStarted(newRunId);
+        await this.handleRunStarted(newRunId);
       }
     } catch (error) {
+      const err = error as any;
+      if (err?.name === 'AbortError') {
+        console.log('Chat initialization cancelled');
+        return;
+      }
       console.error('Failed to initialize chat:', error);
     }
   }
@@ -965,7 +970,14 @@ export class ChatComponent implements OnInit, OnDestroy {
     userId: string,
     urlParams: { projectId: string | null; repositoryId: string | null; projectPath: string | null }
   ): Promise<string | null> {
-    const response = await this.sendChatInitializationRequest(token, userId, urlParams);
+    // Cancel any previous stream
+    if (this.chatkitAbortController) {
+      this.chatkitAbortController.abort();
+    }
+    const controller = new AbortController();
+    this.chatkitAbortController = controller;
+
+    const response = await this.sendChatInitializationRequest(token, userId, urlParams, controller.signal);
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -979,10 +991,17 @@ export class ChatComponent implements OnInit, OnDestroy {
       if (runId && urlParams.projectId) {
         this.updateProjectWithRunId(urlParams.projectId, runId);
       }
+      if (this.chatkitAbortController === controller) {
+        this.chatkitAbortController = null;
+      }
       return runId;
     }
 
-    return await this.processInitializationStream(response, urlParams.projectId);
+    const result = await this.processInitializationStream(response, urlParams.projectId);
+    if (this.chatkitAbortController === controller) {
+      this.chatkitAbortController = null;
+    }
+    return result;
   }
 
   private buildInitializationRequestPayload(
@@ -1003,7 +1022,8 @@ export class ChatComponent implements OnInit, OnDestroy {
   private async sendChatInitializationRequest(
     token: string | null,
     userId: string,
-    urlParams: { projectId: string | null; repositoryId: string | null; projectPath: string | null }
+    urlParams: { projectId: string | null; repositoryId: string | null; projectPath: string | null },
+    signal: AbortSignal
   ): Promise<Response> {
     return await fetch('/api/chatkit/start', {
       method: 'POST',
@@ -1012,7 +1032,8 @@ export class ChatComponent implements OnInit, OnDestroy {
         'Content-Type': 'application/json',
         'X-User-Subject': userId
       },
-      body: JSON.stringify(this.buildInitializationRequestPayload(urlParams))
+      body: JSON.stringify(this.buildInitializationRequestPayload(urlParams)),
+      signal
     });
   }
 
@@ -1030,9 +1051,7 @@ export class ChatComponent implements OnInit, OnDestroy {
     let assistantMessage = '';
     let runId: string | null = null;
 
-    // Initialize assistant message for UI updates
-    this.initializeAssistantMessage(true);
-
+    this.chatkitStreamActive = true;
     try {
       while (true) {
         const { done, value } = await reader.read();
@@ -1041,56 +1060,54 @@ export class ChatComponent implements OnInit, OnDestroy {
         const chunk = decoder.decode(value);
         const lines = chunk.split('\n');
 
-        // Process SSE lines using the same logic as sendChatkitMessage
-        const result = this.processSSELines(lines, assistantMessage, true);
-        assistantMessage = result.assistantMessage;
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
 
-        // Extract run_id from the stream
-        if (!runId) {
-          runId = this.extractRunIdFromLines(lines);
-          if (runId) {
-            this.updateProjectWithRunId(projectId, runId);
+              if (data.type === 'client_effect' && data.name) {
+                this.handleEvent({ event_type: data.name, payload: data.data || {} });
+                if (this.isTerminalEvent(data)) {
+                  continue;
+                }
+              } else if (data.type === 'progress_update' || (data.icon && data.text)) {
+                this.updateRunProgressMessage(data.text, data.icon);
+              } else if (data.type === 'thread.item.done' && data.item) {
+                if (data.item.type === 'user_message') {
+                  continue;
+                }
+                const content = data.item.content || [];
+                if (content.length > 0) {
+                  assistantMessage = content.map((c: any) => c.text || '').join('');
+                  runId = data.item.thread_id || runId;
+                  if (runId && projectId) {
+                    this.updateProjectWithRunId(projectId, runId);
+                  }
+                  const projects = this.extractProjectsFromItem(data, assistantMessage);
+                  this.updateAssistantMessage(assistantMessage, projects, true);
+                }
+              } else if (data.content && !this.isTerminalEvent(data)) {
+                assistantMessage += data.content;
+                runId = data.thread_id || runId;
+                if (runId && projectId) {
+                  this.updateProjectWithRunId(projectId, runId);
+                }
+                this.updateAssistantMessage(assistantMessage, undefined, false);
+              }
+            } catch (e) {
+              console.error('SSE parse error:', e);
+            }
           }
         }
       }
     } finally {
       reader.releaseLock();
+      this.chatkitStreamActive = false;
     }
-
-    // Clean up an empty placeholder if the init stream carried only metadata
-    if (!assistantMessage) {
-      this.removeEmptyAssistantPlaceholder();
-    }
-
-    // Mark sending as complete
-    this.isSending = false;
-    this.cdr.detectChanges();
 
     return runId;
   }
 
-  private extractRunIdFromLines(lines: string[]): string | null {
-    for (const line of lines) {
-      const trimmedLine = line.trim();
-      if (trimmedLine.startsWith('data: ')) {
-        const runId = this.parseSSELineForRunId(trimmedLine);
-        if (runId) {
-          return runId;
-        }
-      }
-    }
-    return null;
-  }
-
-  private parseSSELineForRunId(line: string): string | null {
-    try {
-      const data = JSON.parse(line.slice(6));
-      return data.item?.thread_id || data.item?.run_id || data.thread_id || data.run_id || null;
-    } catch (e) {
-      console.debug('Failed to parse SSE line:', line);
-      return null;
-    }
-  }
 
   private updateProjectWithRunId(projectId: string | null, runId: string): void {
     if (!projectId) {
@@ -1149,7 +1166,7 @@ export class ChatComponent implements OnInit, OnDestroy {
         this.runId = savedRunId;
         this.messages = response.items || [];
         console.log('Successfully loaded thread from project.run_id');
-        this.handleRunStarted(savedRunId);
+        await this.handleRunStarted(savedRunId);
         return true;
       }
     } catch (error) {
@@ -1176,7 +1193,7 @@ export class ChatComponent implements OnInit, OnDestroy {
         this.messages = response.items || [];
         console.log('Successfully loaded thread by project_id');
         if (this.runId) {
-          this.handleRunStarted(this.runId);
+          await this.handleRunStarted(this.runId);
         }
         return true;
       }
@@ -1205,7 +1222,7 @@ export class ChatComponent implements OnInit, OnDestroy {
     this.runId = null;
   }
   
-  handleRunStarted(runId: string): void {
+  async handleRunStarted(runId: string): Promise<void> {
     this.submittedApprovalRequestIds.clear();
     this.runProgressMessageIndex = null;
     this.currentRunId = runId;
@@ -1214,7 +1231,16 @@ export class ChatComponent implements OnInit, OnDestroy {
       status: 'running',
       createdAt: new Date().toISOString()
     };
-    this.startEventStream(runId);
+
+    // For crewai agent types, send initial message to start the agent using ChatKit's standard pattern
+    if (this.agentType && this.agentType.includes('crewai')) {
+      if (this.chatkitStreamActive || this.isSending) {
+        return;
+      }
+      this.newMessage = 'run crewai on this github project';
+      await this.sendMessage();
+      this.cdr.detectChanges();
+    }
   }
   
   handleApprovalRequired(approval: any): void {
@@ -1261,22 +1287,26 @@ export class ChatComponent implements OnInit, OnDestroy {
     return eventData;
   }
 
-  handleDialogSelection(option: string): void {
-    this.submitUserInput(option);
+  async handleDialogSelection(option: string): Promise<void> {
+    await this.submitUserInput(option);
   }
 
-  handleChatApprovalSelection(message: ChatMessage, option: string): void {
-    this.submitUserInput(option, message.approval?.approvalRequestId);
+  async handleChatApprovalSelection(message: ChatMessage, option: string): Promise<void> {
+    if (message.approval) {
+      message.approval.selectedOption = option;
+    }
+    this.cdr.detectChanges();
+    await this.submitUserInput(option, message.approval?.approvalRequestId);
   }
 
   isApprovalSubmitted(approvalRequestId: string | undefined): boolean {
     return !!approvalRequestId && this.submittedApprovalRequestIds.has(approvalRequestId);
   }
 
-  handleDialogDecision(approvalId: string, approved: boolean): void {
+  async handleDialogDecision(approvalId: string, approved: boolean): Promise<void> {
     const isWaitingInput = this.pendingApproval?.approval_request_id || this.pendingApproval?.options;
     if (isWaitingInput) {
-      this.submitUserInput(approved ? 'approved' : 'rejected');
+      await this.submitUserInput(approved ? 'approved' : 'rejected');
       return;
     }
 
@@ -1299,36 +1329,16 @@ export class ChatComponent implements OnInit, OnDestroy {
       return;
     }
 
-    const { token, userId } = this.getUserInfo();
-    try {
-      const body: any = { input: value };
-      if (approvalRequestId) {
-        body.approval_request_id = approvalRequestId;
-      }
-      const response = await fetch(`/api/chatkit/input/${this.currentRunId}`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-          'X-User-Subject': userId
-        },
-        body: JSON.stringify(body)
-      });
-
-      if (!response.ok) {
-        throw new Error(`Failed to send input: ${response.status}`);
-      }
-
-      if (approvalRequestId) {
-        this.submittedApprovalRequestIds.add(approvalRequestId);
-      }
-      this.messages.push({ role: 'user', content: value });
-      this.showApprovalDialog = false;
-      this.pendingApproval = null;
-      this.cdr.detectChanges();
-    } catch (err) {
-      console.error('Failed to submit user input:', err);
+    if (approvalRequestId) {
+      this.submittedApprovalRequestIds.add(approvalRequestId);
     }
+    this.showApprovalDialog = false;
+    this.pendingApproval = null;
+    this.cdr.detectChanges();
+
+    // Open a new ChatKit stream with the user's input — this sends the
+    // message to the worker via NATS and streams back subsequent events.
+    await this.sendChatkitMessage(value, true);
   }
   
   handleArtifactCreated(artifact: any): void {
@@ -1338,23 +1348,86 @@ export class ChatComponent implements OnInit, OnDestroy {
       this.selectedArtifact = artifact;
     }
   }
-  
-  private startEventStream(runId: string): void {
-    if (this.eventSource) {
-      this.eventSource.close();
+
+  private handleTerminalStarted(payload: any): void {
+    this.ngZone.run(() => {
+      this.terminalSession = {
+        sessionId: payload.terminal_session_id,
+        command: payload.command || '',
+        status: 'running',
+        startedAt: Date.now(),
+        output: [],
+      };
+      this.cdr.detectChanges();
+    });
+  }
+
+  private handleTerminalOutput(payload: any): void {
+    const session = this.terminalSession;
+    if (!session) return;
+    this.ngZone.run(() => {
+      const chunk: TerminalOutputChunk = {
+        outputId: payload.output_id,
+        data: payload.data || '',
+        chunkIndex: payload.chunk_index ?? 0,
+        chunkCount: payload.chunk_count ?? 1,
+        sequence: payload.sequence ?? 0,
+      };
+      this.terminalSession = {
+        ...session,
+        output: [...session.output, chunk],
+      };
+      this.cdr.detectChanges();
+    });
+  }
+
+  private handleTerminalEnded(status: 'completed' | 'failed' | 'cancelled', payload: any): void {
+    if (!this.terminalSession) return;
+    this.ngZone.run(() => {
+      this.terminalSession!.status = status;
+      this.terminalSession!.endedAt = Date.now();
+      if (payload.exit_code !== undefined) {
+        this.terminalSession!.exitCode = payload.exit_code;
+      }
+      this.cdr.detectChanges();
+    });
+  }
+
+  private handleTerminalInputRequired(payload: any): void {
+    if (!this.terminalSession) return;
+    this.ngZone.run(() => {
+      const prompt = payload.prompt || 'Input required';
+      this.terminalSession!.output.push({
+        outputId: `input-prompt-${Date.now()}`,
+        data: `\r\n\x1b[33m${prompt}\x1b[0m `,
+        chunkIndex: 0,
+        chunkCount: 1,
+        sequence: (this.terminalSession!.output.length + 1) * 1000,
+      });
+      this.cdr.detectChanges();
+    });
+  }
+
+  async onTerminalStdin(key: string): Promise<void> {
+    if (!this.currentRunId || !this.terminalSession) return;
+    const { token, userId } = this.getUserInfo();
+    try {
+      await fetch(`/api/chatkit/input/${this.currentRunId}`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          'X-User-Subject': userId,
+        },
+        body: JSON.stringify({
+          input: key,
+          source: 'stdin',
+          terminal_session_id: this.terminalSession.sessionId,
+        }),
+      });
+    } catch (err) {
+      console.error('Failed to send stdin input:', err);
     }
-    
-    const token = localStorage.getItem('jwt_token');
-    this.eventSource = new EventSource(`/api/agent/runs/${runId}/events?token=${token}`);
-    
-    this.eventSource.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      this.handleEvent(data);
-    };
-    
-    this.eventSource.onerror = (error) => {
-      console.error('EventStream error:', error);
-    };
   }
   
   private handleEvent(event: any): void {
@@ -1402,6 +1475,24 @@ export class ChatComponent implements OnInit, OnDestroy {
       case 'artifact_created':
         this.handleArtifactCreated(eventData);
         break;
+      case 'terminal.started':
+        this.handleTerminalStarted(eventData);
+        break;
+      case 'terminal.output':
+        this.handleTerminalOutput(eventData);
+        break;
+      case 'terminal.completed':
+        this.handleTerminalEnded('completed', eventData);
+        break;
+      case 'terminal.failed':
+        this.handleTerminalEnded('failed', eventData);
+        break;
+      case 'terminal.cancelled':
+        this.handleTerminalEnded('cancelled', eventData);
+        break;
+      case 'terminal.input_required':
+        this.handleTerminalInputRequired(eventData);
+        break;
     }
   }
 
@@ -1416,16 +1507,16 @@ export class ChatComponent implements OnInit, OnDestroy {
     return data;
   }
 
-  private updateRunProgressMessage(content: unknown): void {
+  private updateRunProgressMessage(content: unknown, icon?: string): void {
     if (typeof content !== 'string' || !content.trim()) {
       return;
     }
     this.ngZone.run(() => {
       if (this.runProgressMessageIndex === null) {
         this.runProgressMessageIndex = this.messages.length;
-        this.messages.push({ role: 'assistant', content });
+        this.messages.push({ role: 'assistant', content, icon });
       } else {
-        this.messages[this.runProgressMessageIndex] = { role: 'assistant', content };
+        this.messages[this.runProgressMessageIndex] = { role: 'assistant', content, icon };
       }
       this.cdr.detectChanges();
     });
@@ -1446,16 +1537,38 @@ export class ChatComponent implements OnInit, OnDestroy {
   }
 
   private closeRunEventStream(): void {
-    if (this.eventSource) {
-      this.eventSource.close();
-      this.eventSource = null;
-    }
     this.cdr.detectChanges();
   }
   
   selectProject(project: Project): void {
     // Pre-fill the input with selected project path
     this.newMessage = project.path;
+  }
+
+  getIconEmoji(icon: string): string {
+    const iconMap: Record<string, string> = {
+      'agent': '\u{1F916}',
+      'play': '\u{25B6}\uFE0F',
+      'check': '\u2705',
+      'check-circle': '\u2705',
+      'check-circle-filled': '\u2705',
+      'info': '\u2139\uFE0F',
+      'circle-question': '\u2753',
+      'desktop': '\u{1F5A5}\uFE0F',
+      'settings-slider': '\u2699\uFE0F',
+      'sparkle': '\u2728',
+      'sparkle-double': '\u2728',
+      'bug': '\u{1F41B}',
+      'bolt': '\u26A1',
+      'search': '\u{1F50D}',
+      'lightbulb': '\u{1F4A1}',
+      'clock': '\u{1F552}',
+      'document': '\u{1F4C4}',
+      'globe': '\u{1F310}',
+      'star': '\u2B50',
+      'write': '\u270D\uFE0F',
+    };
+    return iconMap[icon] || '\u{1F4AC}';
   }
 
   isJsonArray(content: string): boolean {

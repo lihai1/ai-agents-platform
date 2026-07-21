@@ -1,4 +1,5 @@
 from sqlalchemy import Column, String, DateTime, Text, ForeignKey, Integer, JSON, Float, Boolean
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.sql import func
 from internal.db import Base
 import uuid
@@ -106,3 +107,55 @@ class WorkspaceLease(Base):
     leased_at = Column(DateTime(timezone=True), server_default=func.now())
     released_at = Column(DateTime(timezone=True), nullable=True)
     extra_metadata = Column(JSON, nullable=True)
+
+
+class ChatKitThreadRow(Base):
+    """ChatKit ThreadMetadata persistence."""
+    __tablename__ = "chatkit_threads"
+
+    id = Column(String, primary_key=True)
+    user_subject = Column(String, nullable=False, index=True)
+    title = Column(String, nullable=True)
+    status = Column(String, nullable=False, default="active")
+    metadata_json = Column(JSONB, nullable=False, server_default="{}")
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=True, onupdate=func.now())
+
+
+class ChatKitItemRow(Base):
+    """ChatKit ThreadItem persistence."""
+    __tablename__ = "chatkit_items"
+
+    id = Column(String, primary_key=True)
+    thread_id = Column(
+        String,
+        ForeignKey("chatkit_threads.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    item_type = Column(String, nullable=False)
+    item_json = Column(JSONB, nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class ChatKitInputRouteRow(Base):
+    """ChatKit input routing and correlation."""
+    __tablename__ = "chatkit_input_routes"
+
+    item_id = Column(String, primary_key=True)
+    thread_id = Column(
+        String,
+        ForeignKey("chatkit_threads.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    run_id = Column(String, nullable=False, index=True)
+    source_type = Column(String, nullable=False)  # langgraph_interrupt | process_stdin
+    correlation_id = Column(String, nullable=False, index=True)
+    terminal_session_id = Column(String, nullable=True)
+    allowed_values_json = Column(JSONB, nullable=True)
+    status = Column(String, nullable=False, default="pending", index=True)  # pending | submitting | submitted | failed
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=True, onupdate=func.now())
+    submitted_at = Column(DateTime(timezone=True), nullable=True)
+    last_error = Column(Text, nullable=True)

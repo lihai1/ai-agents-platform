@@ -50,11 +50,15 @@ ENV PYTHON_MODULE=crewai_expert.main
 
 # Worker feature flags and defaults.
 ENV CREWAI_EXPERT_REPAIR=true
+
+# Chunking defaults for terminal output streaming
+ENV OUTPUT_MAX_BUFFER_CHARS=5000
+ENV CHUNK_SIZE_BYTES=2500
 ENV CREWAI_EXPERT_REQUIRE_PATCH_APPROVAL=true
 ENV CREWAI_EXPERT_MAX_SELECTION_ATTEMPTS=3
 ENV CREWAI_EXPERT_MAX_PATCH_ATTEMPTS=2
 ENV OLLAMA_BASE_URL=http://ollama:11434
-ENV OLLAMA_MODEL=qwen3.5:9b
+ENV MODEL_NAME=qwen3.5:9b
 
 # The orchestrator or test harness is expected to set RUN_ID, USER_ID, NATS_URL,
 # REPOSITORY_URL, and MOCK_MODE at runtime.

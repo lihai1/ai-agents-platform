@@ -61,7 +61,7 @@ async def test_crewai_worker_flow(nats_client, run_id, user_id):
 
     try:
         with patch(
-            "internal.agents.crewai.src.agent_worker.main.resolve_config",
+            "agent_worker.worker.resolve_config",
             return_value=_crew_config(nats_url, user_id, run_id),
         ):
             crewAIWorker = CrewAIWorker()

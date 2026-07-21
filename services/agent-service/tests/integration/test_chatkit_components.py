@@ -146,7 +146,7 @@ async def test_postgresql_store_class():
     
     # Verify store was created
     assert store is not None
-    assert store.session_factory == mock_session_factory
+    assert store._session_factory == mock_session_factory
 
 
 # Standalone entry point to run without conftest

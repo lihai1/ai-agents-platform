@@ -105,28 +105,28 @@ func (m *Manager) StartWorker(repoConfig RepositoryConfig, llmConfig LLMConfig) 
 // agentContainerConfigs maps agent types to their Docker image and naming prefix.
 var agentContainerConfigs = map[string]WorkerContainerConfig{
 	"single-agent": {
-		ImageName:           "agentic-agents-platform-agent-worker-single-agent:latest",
+		ImageName:           "agentic-agents-platform-agent-worker:latest",
 		ContainerNamePrefix: "automated-single-agent-run",
 		Network:             "agentic-network",
 		NATSURL:             "nats://nats:4222",
 		AgentType:           "single-agent",
 	},
 	"specialist": {
-		ImageName:           "agentic-agents-platform-agent-worker-specialist:latest",
+		ImageName:           "agentic-agents-platform-agent-worker:latest",
 		ContainerNamePrefix: "automated-specialists-run",
 		Network:             "agentic-network",
 		NATSURL:             "nats://nats:4222",
 		AgentType:           "specialist",
 	},
 	"crewai": {
-		ImageName:           "agentic-agents-platform-agent-worker-crewai:latest",
+		ImageName:           "agentic-agents-platform-agent-worker:latest",
 		ContainerNamePrefix: "automated-crewai-run",
 		Network:             "agentic-network",
 		NATSURL:             "nats://nats:4222",
 		AgentType:           "crewai",
 	},
 	"crewai-expert": {
-		ImageName:           "agentic-agents-platform-agent-worker-crewai-expert:latest",
+		ImageName:           "agentic-agents-platform-agent-worker:latest",
 		ContainerNamePrefix: "automated-crewai-expert-run",
 		Network:             "agentic-network",
 		NATSURL:             "nats://nats:4222",

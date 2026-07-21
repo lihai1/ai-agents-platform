@@ -28,6 +28,14 @@ from .nats_subjects import (
     format_event_state_wildcard,
 )
 from .nats_streams import get_crewai_stream_configs
+from .chunking import (
+    NATS_MAX_PAYLOAD_BYTES,
+    NATS_PAYLOAD_SAFETY_MARGIN_BYTES,
+    TERMINAL_OUTPUT_MAX_CHUNK_BYTES,
+    byte_length,
+    split_terminal_output,
+    build_chunked_terminal_output_events,
+)
 
 __all__ = [
     "CONTROL_START_SUBJECT_TEMPLATE",
@@ -55,4 +63,10 @@ __all__ = [
     "format_event_state",
     "format_event_state_wildcard",
     "get_crewai_stream_configs",
+    "NATS_MAX_PAYLOAD_BYTES",
+    "NATS_PAYLOAD_SAFETY_MARGIN_BYTES",
+    "TERMINAL_OUTPUT_MAX_CHUNK_BYTES",
+    "byte_length",
+    "split_terminal_output",
+    "build_chunked_terminal_output_events",
 ]

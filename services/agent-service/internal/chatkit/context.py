@@ -17,6 +17,7 @@ class RequestContext:
     model_name: str = "qwen3.5:9b"
     agent_type: str = "specialist"
     api_key: str = ""
+    is_new_thread: bool = False
 
 
 def _env_mock_mode() -> bool:

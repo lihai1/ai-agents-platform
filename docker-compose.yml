@@ -39,6 +39,8 @@ services:
         condition: service_healthy
       nats:
         condition: service_started
+    env_file:
+      - .env
     environment:
       DATABASE_URL: postgres://agentic:agentic@postgres:5432/agentic?sslmode=disable
       JWT_SECRET: dev-secret-change-in-production

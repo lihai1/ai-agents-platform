@@ -207,7 +207,7 @@ var _ = Describe("Manager", func() {
 				Expect(mockOrch.createdConfigs).To(HaveLen(1))
 
 				config := mockOrch.createdConfigs[0]
-				Expect(config.Image).To(Equal("agentic-agents-platform-agent-worker-crewai-expert:latest"))
+				Expect(config.Image).To(Equal("agentic-agents-platform-agent-worker:latest"))
 				Expect(config.EnvVars["AGENT_TYPE"]).To(Equal("crewai-expert"))
 				Expect(config.EnvVars["USER_ID"]).To(Equal("user-123"))
 			})

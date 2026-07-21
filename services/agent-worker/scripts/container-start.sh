@@ -12,8 +12,31 @@ GIT_TOKEN="${GIT_TOKEN:-}"
 NATS_URL="${NATS_URL:-nats://nats:4222}"
 MOCK_MODE="${MOCK_MODE:-false}"
 LLM_PROVIDER="${LLM_PROVIDER:-fake}"
-PYTHON_MODULE="${PYTHON_MODULE:-specialist_worker.main}"
-PYTHONPATH="${PYTHONPATH:-/app/internal/agents/specialist/src}"
+AGENT_TYPE="${AGENT_TYPE:-specialist}"
+
+# Resolve the worker entry point from AGENT_TYPE when PYTHON_MODULE is not explicit.
+if [ -z "${PYTHON_MODULE:-}" ]; then
+    case "$AGENT_TYPE" in
+        single-agent)
+            PYTHON_MODULE="internal.agents.single_agent.main"
+            ;;
+        specialist)
+            PYTHON_MODULE="internal.agents.specialist.main"
+            ;;
+        crewai)
+            PYTHON_MODULE="agent_worker.main"
+            ;;
+        crewai-expert)
+            PYTHON_MODULE="crewai_expert.main"
+            ;;
+        *)
+            echo "Error: Unknown AGENT_TYPE '$AGENT_TYPE'"
+            exit 1
+            ;;
+    esac
+fi
+
+PYTHONPATH="${PYTHONPATH:-/app:/app/internal/agents/crewai/src:/app/internal/agents/crewai-expert/src:/app/internal/agents/patch}"
 
 if [ -z "$RUN_ID" ]; then
     echo "Error: RUN_ID environment variable is required"
